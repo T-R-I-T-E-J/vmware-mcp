@@ -15,6 +15,10 @@ export interface BootCommandContext {
   /** Base URL of the seed HTTP server, e.g. http://192.168.119.1:54321 */
   seedUrl?: string;
   hostname?: string;
+  /** Locale to set before the preseed is fetched, e.g. "en_US". */
+  locale?: string;
+  /** Keyboard layout, e.g. "us". */
+  keymap?: string;
 }
 
 export interface BootCommandSpec {
@@ -46,7 +50,9 @@ export function defaultBootCommand(kind: InstallerKind, ctx: BootCommandContext 
         bootWaitSec: 12,
         // Esc leaves the graphical isolinux menu for a plain `boot:` prompt,
         // where `auto url=` fetches the preseed over HTTP.
-        command: `<esc><wait2>auto url=${ctx.seedUrl ?? "http://SEED_URL"}/p<enter>`,
+        // locale= and keymap= on the kernel command line take effect BEFORE the
+        // preseed is fetched, so the installer UI language is deterministic.
+        command: `<esc><wait2>auto url=${ctx.seedUrl ?? "http://SEED_URL"}/p locale=${ctx.locale ?? "en_US"} keymap=${ctx.keymap ?? "us"}<enter>`,
         // Deliberately slow. At 60ms a loaded host dropped characters and the
         // prompt received "uto url=http:" instead of the full URL, which fails
         // silently — the installer just sits at its menu.
@@ -57,7 +63,7 @@ export function defaultBootCommand(kind: InstallerKind, ctx: BootCommandContext 
     case "kali":
       return {
         bootWaitSec: 14,
-        command: `<esc><wait2>auto url=${ctx.seedUrl ?? "http://SEED_URL"}/p<enter>`,
+        command: `<esc><wait2>auto url=${ctx.seedUrl ?? "http://SEED_URL"}/p locale=${ctx.locale ?? "en_US"} keymap=${ctx.keymap ?? "us"}<enter>`,
         // Deliberately slow. At 60ms a loaded host dropped characters and the
         // prompt received "uto url=http:" instead of the full URL, which fails
         // silently — the installer just sits at its menu.

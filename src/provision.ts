@@ -207,7 +207,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
     }
 
     // ---------------------------------------------------------------- boot
-    const spec = defaultBootCommand(kind, { seedUrl, hostname: req.name });
+    const spec = defaultBootCommand(kind, { seedUrl, hostname: req.name, locale: req.locale });
     const command = req.bootCommand ?? spec.command;
     const bootWaitSec = req.bootWaitSec ?? spec.bootWaitSec;
     const keyDelayMs = req.keyDelayMs ?? spec.keyDelayMs;

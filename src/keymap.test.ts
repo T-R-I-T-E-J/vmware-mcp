@@ -137,7 +137,7 @@ describe("parseBootCommand", () => {
   });
 
   it("parses a complete Debian boot command", () => {
-    const cmd = '<esc><wait2>auto url=http://192.168.119.1:8080/p<enter>';
+    const cmd = '<esc><wait2>auto url=http://192.168.119.1:8080/p locale=en_US keymap=us<enter>';
     const steps = parseBootCommand(cmd);
     expect(steps.length).toBeGreaterThan(0);
     expect(steps[0].kind).toBe("key");
