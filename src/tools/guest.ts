@@ -243,6 +243,143 @@ export function registerGuestTools(server: McpServer): void {
 
   defineTool(
     server,
+    "guest_copy_to_dir",
+    {
+      title: "Copy a directory into the guest",
+      description:
+        "Copy an entire host directory tree into the guest, file by file. VMware Tools only offers single-file copy, so this walks the tree.",
+      inputSchema: {
+        ...vmArg,
+        hostDir: z.string().describe("Absolute host directory to copy"),
+        guestDir: z.string().describe("Destination directory inside the guest; will be created"),
+        ...credArgs,
+      },
+    },
+    async (a) => {
+      const cfg = loadConfig();
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      await assertToolsRunning(vmx);
+      const cred = credFor(vmx, a);
+
+      if (!fs.existsSync(a.hostDir) || !fs.statSync(a.hostDir).isDirectory()) {
+        throw new Error(`Not a directory on the host: ${a.hostDir}`);
+      }
+
+      await vmrun.createDirectoryInGuest(cred, vmx, a.guestDir).catch(() => undefined);
+
+      let copied = 0;
+      let failed = 0;
+      const failures: string[] = [];
+
+      function walk(dir: string, guestBase: string): string[] {
+        const entries: string[] = [];
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const hostPath = path.join(dir, entry.name);
+          const rel = path.relative(a.hostDir, hostPath).replace(/\\/g, "/");
+          const guestPath = `${guestBase.replace(/\\/g, "/")}/${rel}`;
+          if (entry.isDirectory()) {
+            entries.push(...walk(hostPath, guestBase));
+          } else {
+            entries.push(hostPath);
+          }
+        }
+        return entries;
+      }
+
+      const files = walk(a.hostDir, a.guestDir);
+      for (const hostPath of files) {
+        const rel = path.relative(a.hostDir, hostPath).replace(/\\/g, "/");
+        const guestPath = `${a.guestDir.replace(/\\/g, "/")}/${rel}`;
+        try {
+          const guestDir = path.posix.dirname(guestPath);
+          await vmrun.createDirectoryInGuest(cred, vmx, guestDir).catch(() => undefined);
+          await vmrun.copyFileToGuest(cred, vmx, hostPath, guestPath);
+          copied++;
+        } catch (e) {
+          failed++;
+          failures.push(`${guestPath}: ${(e as Error).message}`);
+        }
+      }
+
+      return json({ hostDir: a.hostDir, guestDir: a.guestDir, copied, failed, failures });
+    },
+  );
+
+  defineTool(
+    server,
+    "guest_copy_from_dir",
+    {
+      title: "Copy a directory out of the guest",
+      description:
+        "Copy an entire guest directory tree to the host, file by file. Lists the guest directory recursively, then copies each file individually.",
+      inputSchema: {
+        ...vmArg,
+        guestDir: z.string().describe("Absolute guest directory to copy"),
+        hostDir: z.string().optional().describe("Destination host directory; defaults to work directory"),
+        ...credArgs,
+      },
+    },
+    async (a) => {
+      const cfg = loadConfig();
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      await assertToolsRunning(vmx);
+      const cred = credFor(vmx, a);
+
+      const dest = a.hostDir
+        ? path.resolve(a.hostDir)
+        : path.join(cfg.workDir, `copy-${Date.now()}`);
+      fs.mkdirSync(dest, { recursive: true });
+
+      async function listRecursive(guestPath: string): Promise<string[]> {
+        const files: string[] = [];
+        let entries: string[];
+        try {
+          entries = await vmrun.listDirectoryInGuest(cred, vmx, guestPath);
+        } catch {
+          return files;
+        }
+        for (const entry of entries) {
+          const full = guestPath.replace(/\/+$/, "") + "/" + entry;
+          try {
+            const isDir = await vmrun.directoryExistsInGuest(cred, vmx, full);
+            if (isDir) {
+              const sub = await listRecursive(full);
+              files.push(...sub);
+            } else {
+              files.push(full);
+            }
+          } catch {
+            files.push(full);
+          }
+        }
+        return files;
+      }
+
+      const guestFiles = await listRecursive(a.guestDir);
+
+      let copied = 0;
+      let failed = 0;
+      const failures: string[] = [];
+
+      for (const gf of guestFiles) {
+        const rel = path.posix.relative(a.guestDir.replace(/\\/g, "/"), gf);
+        const hostPath = path.join(dest, rel.split("/").join(path.sep));
+        try {
+          fs.mkdirSync(path.dirname(hostPath), { recursive: true });
+          await vmrun.copyFileFromGuest(cred, vmx, gf, hostPath);
+          copied++;
+        } catch (e) {
+          failed++;
+          failures.push(`${rel}: ${(e as Error).message}`);
+        }
+      }
+
+      return json({ guestDir: a.guestDir, hostDir: dest, copied, failed, total: guestFiles.length, failures });
+    },
+  );
+
+  defineTool(
+    server,
     "guest_read_file",
     {
       title: "Read a text file from the guest",
