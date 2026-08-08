@@ -483,4 +483,83 @@ export function registerLifecycleTools(server: McpServer): void {
       return json({ registered: rec });
     },
   );
+
+  defineTool(
+    server,
+    "clone_vm",
+    {
+      title: "Clone a VM",
+      description:
+        "Clone an existing VM. A full clone makes an independent copy; a linked clone shares the parent's virtual disk and needs a snapshot on the parent. Linked clones save disk space and clone in seconds instead of minutes, but cannot run without the parent. The source VM must already be in the registry.",
+      inputSchema: {
+        ...vmArg,
+        destName: z.string().min(1).describe("Name for the new clone"),
+        mode: z.enum(["full", "linked"]).default("full"),
+        snapshot: z.string().optional().describe("Snapshot to base a linked clone on (required for linked mode)"),
+        tags: z.array(z.string()).default([]),
+      },
+    },
+    async (a) => {
+      const cfg = loadConfig();
+      const srcVmx = resolveVmxByNameOrPath(a.vm);
+      const srcRec = listRecords().find((r) => r.vmxPath.toLowerCase() === srcVmx.toLowerCase());
+      if (!srcRec) throw new Error("The source VM must be in the registry. Add it with register_vm first.");
+
+      const destDir = path.join(cfg.vmRoot, a.destName);
+      assertVmPathAllowed(destDir);
+      if (fs.existsSync(destDir)) throw new Error(`Destination directory already exists: ${destDir}`);
+
+      const destVmx = path.join(destDir, `${a.destName}.vmx`);
+
+      if (a.mode === "linked" && !a.snapshot) {
+        throw new Error("Linked clones require a snapshot name on the parent VM.");
+      }
+
+      await vmrun.clone(srcVmx, destVmx, a.mode, { snapshot: a.snapshot, cloneName: a.destName });
+
+      const created = upsertRecord({
+        name: a.destName,
+        vmxPath: destVmx,
+        guestOsId: srcRec.guestOsId,
+        osFamily: srcRec.osFamily,
+        lifecycle: "created",
+        credentialRef: srcRec.credentialRef,
+        tags: a.tags,
+      });
+
+      return json({
+        created: true,
+        name: a.destName,
+        vmxPath: destVmx,
+        mode: a.mode,
+        clonedFrom: srcRec.name,
+        registry: created,
+      });
+    },
+  );
+
+  defineTool(
+    server,
+    "mark_template",
+    {
+      title: "Mark a VM as a template",
+      description:
+        "Tag a VM as a template so it can be discovered and used as a base for clones. A template VM should be clean and powered off.",
+      inputSchema: {
+        ...vmArg,
+        unmark: z.boolean().default(false).describe("Remove the template tag instead of adding it"),
+      },
+    },
+    async (a) => {
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      const rec = listRecords().find((r) => r.vmxPath.toLowerCase() === vmx.toLowerCase());
+      if (!rec) throw new Error(`${vmx} is not in the registry. Add it with register_vm first.`);
+
+      const tags = a.unmark
+        ? rec.tags.filter((t) => t !== "template")
+        : [...new Set([...rec.tags, "template"])];
+      updateRecord(rec.name, { tags });
+      return json({ name: rec.name, isTemplate: !a.unmark, tags });
+    },
+  );
 }
