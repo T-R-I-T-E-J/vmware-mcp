@@ -53,6 +53,11 @@ export async function startSeedServer(
     while (fetchWaiters.length) fetchWaiters.shift()!();
   });
 
+  // Prevent unhandled 'error' events from crashing the server process.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    process.stderr.write(`vmware-mcp: seed HTTP server error: ${err.message}\n`);
+  });
+
   // Every character of the seed URL has to be typed at a bootloader prompt that
   // drops keys under load, so prefer a short, fixed port over an ephemeral
   // five-digit one: ":8080" is four keystrokes fewer than ":59457", and paired
