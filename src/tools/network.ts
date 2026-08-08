@@ -120,6 +120,43 @@ export function registerNetworkTools(server: McpServer): void {
 
   defineTool(
     server,
+    "disable_shared_folders",
+    {
+      title: "Disable shared folders",
+      description:
+        "Disable all shared folders for a VM. Folders remain configured but are no longer accessible from the guest.",
+      inputSchema: { ...vmArg },
+    },
+    async (a) => {
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      await vmrun.disableSharedFolders(vmx);
+      return text(`Disabled shared folders for ${vmx}.`);
+    },
+  );
+
+  defineTool(
+    server,
+    "set_shared_folder_state",
+    {
+      title: "Change a shared folder's access mode",
+      description:
+        "Set a shared folder to writable or read-only mode.",
+      inputSchema: {
+        ...vmArg,
+        shareName: z.string().min(1),
+        hostPath: z.string().describe("Absolute host directory path for the share"),
+        mode: z.enum(["writable", "readonly"]),
+      },
+    },
+    async (a) => {
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      await vmrun.setSharedFolderState(vmx, a.shareName, path.resolve(a.hostPath), a.mode);
+      return text(`Set shared folder "${a.shareName}" to ${a.mode}.`);
+    },
+  );
+
+  defineTool(
+    server,
     "list_shared_folders",
     {
       title: "List shared folders",
