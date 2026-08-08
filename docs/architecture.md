@@ -83,6 +83,60 @@ flowchart TD
 | VNC (RFB) | keyboard input at bootloaders and login screens | No |
 | HTTP seed | handing `preseed.cfg` to Debian/Kali installers | No |
 
+### Which VMware functions we actually call
+
+The whole server rests on this surface. Nothing else from VMware is used.
+
+```mermaid
+flowchart LR
+    subgraph vmrun["<b>vmrun.exe</b> — VIX"]
+        direction TB
+        R1["start · stop · reset<br/>suspend · pause · unpause"]
+        R2["snapshot · listSnapshots<br/>revertToSnapshot · deleteSnapshot"]
+        R3["runProgramInGuest<br/>runScriptInGuest<br/>listProcessesInGuest<br/>killProcessInGuest"]
+        R4["CopyFileFromHostToGuest<br/>CopyFileFromGuestToHost<br/>listDirectoryInGuest<br/>fileExistsInGuest"]
+        R5["getGuestIPAddress<br/>addSharedFolder<br/>setPortForwarding"]
+        R6["clone · deleteVM<br/>checkToolsState · installTools"]
+    end
+    subgraph vmcli["<b>vmcli.exe</b>"]
+        direction TB
+        C1["VM Create"]
+        C2["Disk Create"]
+        C3["ConfigParams SetEntry"]
+        C4["MKS captureScreenshot"]
+    end
+    subgraph other["Other"]
+        direction TB
+        O1["vmware-vdiskmanager -x<br/>grow a disk"]
+        O2["RFB / VNC KeyEvent<br/>src/vnc.ts"]
+        O3["IMAPI2 COM<br/>build seed ISOs"]
+        O4["direct .vmx editing<br/>src/vmx.ts"]
+    end
+```
+
+| VMware function | Used by | Needs a guest OS? |
+|---|---|---|
+| `vmrun start/stop/reset/suspend` | `start_vm` `stop_vm` `reset_vm` `suspend_vm` | No |
+| `vmrun snapshot` family | all `snapshot_*`, `fleet_snapshot`, `fleet_revert` | No |
+| `vmrun runProgramInGuest` / `runScriptInGuest` | `guest_run` `guest_run_script` `guest_exec_capture` `fleet_run` | **Yes** |
+| `vmrun CopyFile*` / `listDirectoryInGuest` | all `guest_copy_*`, `guest_read_file`, `guest_write_file` | **Yes** |
+| `vmrun listProcessesInGuest` / `killProcessInGuest` | `guest_list_processes` `guest_kill_process` | **Yes** |
+| `vmrun getGuestIPAddress` | `get_guest_ip` | **Yes** |
+| `vmrun addSharedFolder` / `setPortForwarding` | shared-folder and port-forward tools | Partly |
+| `vmrun checkToolsState` | `wait_for_tools`, every `guest_*` precondition | No |
+| `vmrun clone` | *not yet exposed* — see [#7](../../issues/7) | No |
+| `vmcli VM Create` + `Disk Create` | `create_vm` `provision_vm` | No |
+| `vmcli ConfigParams SetEntry` | `configure_vm` | No |
+| `vmcli MKS captureScreenshot` | `capture_screen` | No |
+| `vmware-vdiskmanager -x` | `configure_vm` (grow disk) | No |
+| RFB `KeyEvent` (our own client) | `send_keys`, every boot command | No |
+| IMAPI2 COM | seed ISO generation | No |
+| Direct `.vmx` editing | `create_vm` `configure_vm` `set_network` | No |
+
+Two deliberate absences: **`vmrun captureScreen`** is unused (it demands a guest
+login), and **`vmcli MKS sendKeyEvent`** is unused (it silently does nothing).
+Both are explained below.
+
 ### Why VNC, and not the obvious API
 
 `vmcli MKS sendKeyEvent` is the documented way to send a keystroke. On
@@ -280,8 +334,38 @@ flowchart LR
     R --- G8["<b>Fleet</b> · 6<br/>status · start · stop<br/>run · snapshot · revert"]
 ```
 
-Full descriptions in [README.md](../README.md); verification status per tool in
-[ROADMAP.md](../ROADMAP.md).
+Full parameters for every tool: **[docs/tools.md](tools.md)** (generated from the
+server's own schemas). Verification status per tool: [ROADMAP.md](../ROADMAP.md).
+
+### Which tool do I want?
+
+```mermaid
+flowchart TD
+    S{"What are you<br/>trying to do?"}
+    S --> A["Get a new VM"]
+    S --> B["Do something<br/>inside a guest"]
+    S --> C["The VM is stuck<br/>or has no OS"]
+    S --> D["Act on many VMs"]
+
+    A --> A1{"Want the OS<br/>installed too?"}
+    A1 -->|yes| A2["<b>provision_vm</b><br/>then poll get_provision_status"]
+    A1 -->|no| A3["<b>create_vm</b><br/>then start_vm"]
+
+    B --> B1{"Need the<br/>output back?"}
+    B1 -->|yes| B2["<b>guest_exec_capture</b>"]
+    B1 -->|no| B3["guest_run · guest_run_script"]
+    B --> B4["Files → guest_copy_to/from<br/>guest_read_file · guest_write_file"]
+
+    C --> C1["<b>capture_screen</b><br/>see what it's doing"]
+    C1 --> C2["<b>send_keys</b><br/>type at the console"]
+    C2 --> C3["needs enable_console_input<br/>if VM predates this server"]
+
+    D --> D1["fleet_status → fleet_start<br/>fleet_run → fleet_snapshot"]
+```
+
+The `guest_*` branch needs VMware Tools running and credentials. The
+`capture_screen` / `send_keys` branch needs neither — which is why it is the
+answer whenever something is broken.
 
 ---
 
@@ -297,7 +381,17 @@ Full descriptions in [README.md](../README.md); verification status per tool in
 
 ### Honest status
 
-About **22 of 57 tools are verified** against real hardware. The rest are built
-but unproven, because everything downstream of a booting guest has been gated
-behind completing an install. `ROADMAP.md` tracks this per tool rather than
-claiming the whole surface works.
+**Kali 2024.4 has been provisioned end to end** — blank disk to `lifecycle:
+ready`, with the account proven by running commands in it:
+
+```
+kali-lab   lifecycle: ready   toolsState: running   snapshots: clean, verified
+guest_exec_capture → Linux kali 6.11.2-amd64 · uid=1000(labuser)
+get_guest_ip       → 192.168.119.138
+file write/read    → 22 bytes, exact round-trip
+fleet_run          → 1 succeeded, 0 failed
+```
+
+That verified the guest layer. Windows 10, Ubuntu, and Server 2019 remain
+untested to completion. `ROADMAP.md` tracks status per tool rather than claiming
+the whole surface works.

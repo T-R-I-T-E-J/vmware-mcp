@@ -20,7 +20,8 @@ flowchart LR
 ```
 
 New here? **[docs/architecture.md](docs/architecture.md)** is the guided tour —
-what it does, how the pieces fit, and diagrams of the install flow.
+what it does, which VMware functions it calls, and diagrams of the install flow.
+Every tool's parameters: **[docs/tools.md](docs/tools.md)**.
 
 ```jsonc
 // One call. Walk away. Come back to a machine you can run commands on.
@@ -40,10 +41,10 @@ possible.
 > silently does nothing — see **[docs/field-notes.md](docs/field-notes.md)** for
 > the seven failure modes and how each was diagnosed.
 
-**Project status:** ~22 of 57 tools are verified against real hardware; the rest
-are built but unproven, pending a completed guest install. What is done, what is
-unverified, and what is missing is tracked honestly in
-**[ROADMAP.md](ROADMAP.md)**.
+**Project status:** Kali 2024.4 has been provisioned end to end — blank disk to a
+logged-in machine running commands — which verified the guest-control layer.
+Windows and Ubuntu are not yet proven to completion. Status per tool is tracked
+honestly in **[ROADMAP.md](ROADMAP.md)**.
 
 ## What it can do
 
@@ -75,12 +76,26 @@ claude mcp add vmware -- node C:\Users\trite\projects\vmware-mcp\dist\index.js
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VM_ROOT` | `G:\VMs` | Where VMs are created. **Allowlist boundary** — the server refuses to touch anything outside it. |
-| `ISO_LIBRARY` | `G:\iso` | Read-only install media. Never written to. |
+| `VM_ROOT` | `%USERPROFILE%\VMs` | Where VMs are created. **Allowlist boundary** — the server refuses to touch anything outside it. |
+| `ISO_LIBRARY` | `%USERPROFILE%\iso` | Read-only install media. Never written to. |
 | `VMWARE_DIR` | auto-detected | Directory containing `vmrun.exe` |
 | `EXTRA_VM_PATHS` | – | `;`-separated VMs outside `VM_ROOT` to allow (read/write, but never deletable) |
 | `VMWARE_MCP_MAX_RUNNING_VMS` | `8` | Refuse to power on more than this many at once |
 | `VMWARE_MCP_CONCURRENCY` | `4` | Default `fleet_*` parallelism |
+
+### Storage requirements — read this first
+
+Two storage mistakes each cost a wasted 40-minute install before being
+diagnosed. The server now warns about both at startup:
+
+- **Do not put `VM_ROOT` or `ISO_LIBRARY` on a USB drive.** They appear to work,
+  then an install dies partway through with `I/O error, dev sr0` in the guest,
+  because VMware's sustained mixed I/O stalls external drives ([#14](../../issues/14)).
+- **Do not use a directory at a drive root** such as `C:\VMs`. Windows ACLs make
+  `vmcli VM Create` fail with only "Create VM failed" ([#15](../../issues/15)).
+
+A path under your user profile on internal storage is the safe choice, and is
+the default.
 
 Guest passwords live in `%APPDATA%\vmware-mcp\credentials.json`, referenced by
 `credentialRef` so they never have to appear in tool arguments.

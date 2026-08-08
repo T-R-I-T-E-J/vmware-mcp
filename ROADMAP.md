@@ -25,9 +25,9 @@ Verification means the tool ran against real hardware and did what it claimed.
 | Fleet | `fleet_status` |
 | Internals | path allowlist, `confirm: true` gates, IMAPI2 seed ISO, sha512-crypt |
 
-`provision_vm` is partly verified: it has driven the Debian, Ubuntu, and
-Windows 10 installers to the point of installing, but no install has yet been
-carried through to a `ready` VM.
+`provision_vm` is **verified**: Kali 2024.4 went from blank disk to `ready`,
+including the boot-command retry path (attempts 1 and 2 dropped keystrokes,
+attempt 3 landed). Windows and Ubuntu have reached the installer but not `ready`.
 
 ### Built, not yet verified ⛔
 
@@ -116,7 +116,7 @@ but no tool accepts it), ISO library subdirectory scanning.
 | Windows 10 | `autounattend.xml` on seed CD | Installs unattended; OOBE, auto-logon, and Tools install unverified |
 | Ubuntu 24.04 desktop | cloud-init `CIDATA` seed | Installs unattended; completion unverified |
 | Debian 12 | preseed over HTTP | Reaches package install; completion unverified |
-| Kali 2024.4 | preseed over HTTP (Kali mirror + xfce task) | Untested |
+| Kali 2024.4 | preseed over HTTP (Kali mirror) | **✅ Verified end to end — reached `ready`** |
 | Windows Server 2019 | `autounattend.xml`, image index 2 | Untested |
 | Windows 7 | `autounattend.xml` | Untested, best-effort — Tools support on 17.x is legacy |
 

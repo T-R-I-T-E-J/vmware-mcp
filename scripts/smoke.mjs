@@ -10,9 +10,8 @@ const transport = new StdioClientTransport({
   args: [SERVER],
   env: {
     ...process.env,
-    VM_ROOT: "G:\\VMs",
-    ISO_LIBRARY: "G:\\iso",
-    EXTRA_VM_PATHS: "G:\\kali-linux-2025.2-vmware-amd64.vmwarevm",
+    VM_ROOT: process.env.VM_ROOT ?? "C:\\Users\\trite\\VMs",
+    ISO_LIBRARY: process.env.ISO_LIBRARY ?? "C:\\Users\\trite\\iso",
   },
   stderr: "inherit",
 });

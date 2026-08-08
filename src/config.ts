@@ -86,8 +86,13 @@ export function loadConfig(): Config {
     vdiskmanager: path.join(vmwareDir, "vmware-vdiskmanager.exe"),
     toolsWindowsIso: firstExisting(path.join(vmwareDir, "windows.iso")),
 
-    vmRoot: envPath("VM_ROOT", "G:\\VMs"),
-    isoLibrary: envPath("ISO_LIBRARY", "G:\\iso"),
+    // Default under the user profile, not a drive root and not removable media.
+    // A directory at a drive root inherits restrictive ACLs and makes
+    // `vmcli VM Create` fail with only "Create VM failed"; a USB drive survives
+    // light use then kills installs with guest-side I/O errors. Both cost a
+    // wasted install before being diagnosed — see issues #14 and #15.
+    vmRoot: envPath("VM_ROOT", path.join(os.homedir(), "VMs")),
+    isoLibrary: envPath("ISO_LIBRARY", path.join(os.homedir(), "iso")),
     extraVmPaths: (process.env.EXTRA_VM_PATHS ?? "")
       .split(";")
       .map((s) => s.trim())
