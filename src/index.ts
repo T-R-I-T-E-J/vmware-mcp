@@ -2,6 +2,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config.js";
+import { preflightStorage } from "./paths.js";
+import { removableStorageWarnings } from "./storage.js";
 import { registerLifecycleTools } from "./tools/lifecycle.js";
 import { registerPowerTools } from "./tools/power.js";
 import { registerSnapshotTools } from "./tools/snapshots.js";
@@ -43,6 +45,21 @@ async function main(): Promise<void> {
   process.stderr.write(
     `vmware-mcp ready | vmware=${cfg.vmwareDir} | vmRoot=${cfg.vmRoot} | isoLibrary=${cfg.isoLibrary}\n`,
   );
+
+  // Storage problems here fail slowly and misleadingly — a bad VM_ROOT surfaces
+  // as vmcli's opaque "Create VM failed", and a USB drive as a guest I/O error
+  // 40 minutes into an install. Say so up front instead.
+  const { errors, warnings } = preflightStorage();
+  for (const e of errors) process.stderr.write(`vmware-mcp ERROR: ${e}\n`);
+  for (const w of warnings) process.stderr.write(`vmware-mcp WARNING: ${w}\n`);
+
+  // Bus detection shells out, so it must not delay the server accepting requests.
+  void removableStorageWarnings([
+    { label: "VM_ROOT", dir: cfg.vmRoot },
+    { label: "ISO_LIBRARY", dir: cfg.isoLibrary },
+  ]).then((ws) => {
+    for (const w of ws) process.stderr.write(`vmware-mcp WARNING: ${w}\n`);
+  });
 }
 
 main().catch((e: unknown) => {

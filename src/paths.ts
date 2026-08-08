@@ -86,6 +86,65 @@ export function assertIsoAllowed(target: string): string {
 }
 
 /**
+ * Verify VM_ROOT is somewhere VMware can actually build a VM, and warn about
+ * storage that will fail slowly rather than fast.
+ *
+ * Both checks come from failures that each cost a wasted install:
+ *
+ * - A directory at a drive root (C:\VMs) inherits restrictive ACLs on Windows 11.
+ *   `vmcli VM Create` gets far enough to leave a .vmx.lck behind, then reports
+ *   only "Create VM failed" (#15).
+ * - VMs or ISOs on a USB drive survive light use, then die mid-install with
+ *   guest-side `I/O error, dev sr0` once VMware is doing sustained mixed I/O
+ *   on a loaded host (#14).
+ */
+export function preflightStorage(): { errors: string[]; warnings: string[] } {
+  const cfg = loadConfig();
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  for (const [label, dir] of [["VM_ROOT", cfg.vmRoot], ["ISO_LIBRARY", cfg.isoLibrary]] as const) {
+    if (!fs.existsSync(dir)) {
+      if (label === "VM_ROOT") {
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+        } catch (e) {
+          errors.push(`${label} ${dir} does not exist and cannot be created: ${(e as Error).message}`);
+          continue;
+        }
+      } else {
+        warnings.push(`${label} ${dir} does not exist; list_isos will return nothing.`);
+        continue;
+      }
+    }
+
+    // A first-level directory at a drive root, e.g. C:\VMs.
+    const parsed = path.parse(path.resolve(dir));
+    if (path.dirname(path.resolve(dir)).toLowerCase() === parsed.root.toLowerCase()) {
+      warnings.push(
+        `${label} (${dir}) sits directly at a drive root. On Windows these inherit restrictive ACLs and "vmcli VM Create" can fail with only "Create VM failed". A path under your user profile, e.g. ${path.join(process.env.USERPROFILE ?? "C:\\Users\\you", path.basename(dir))}, is safer.`,
+      );
+    }
+  }
+
+  // Probe that VM_ROOT is genuinely writable, rather than trusting the ACL.
+  if (fs.existsSync(cfg.vmRoot)) {
+    const probe = path.join(cfg.vmRoot, `.vmware-mcp-write-probe-${process.pid}`);
+    try {
+      fs.mkdirSync(probe);
+      fs.writeFileSync(path.join(probe, "t"), "t");
+      fs.rmSync(probe, { recursive: true, force: true });
+    } catch (e) {
+      errors.push(
+        `VM_ROOT ${cfg.vmRoot} is not writable (${(e as Error).message}). VM creation will fail with an unhelpful "Create VM failed" from vmcli.`,
+      );
+    }
+  }
+
+  return { errors, warnings };
+}
+
+/**
  * Locate a VM by bare name (folder under VM_ROOT) or by explicit .vmx path.
  * Also understands macOS-style .vmwarevm bundles, which is how the existing
  * Kali VM on this host is packaged.
