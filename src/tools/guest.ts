@@ -410,6 +410,27 @@ export function registerGuestTools(server: McpServer): void {
 
   defineTool(
     server,
+    "guest_rename",
+    {
+      title: "Rename a file or directory in the guest",
+      description: "Rename or move a file or directory inside the guest.",
+      inputSchema: {
+        ...vmArg,
+        fromPath: z.string().describe("Current path inside the guest"),
+        toPath: z.string().describe("New path inside the guest"),
+        ...credArgs,
+      },
+    },
+    async (a) => {
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      await assertToolsRunning(vmx);
+      await vmrun.renameFileInGuest(credFor(vmx, a), vmx, a.fromPath, a.toPath);
+      return text(`Renamed ${a.fromPath} → ${a.toPath} in guest.`);
+    },
+  );
+
+  defineTool(
+    server,
     "guest_kill_process",
     {
       title: "Kill a guest process",
