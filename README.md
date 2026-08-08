@@ -8,6 +8,20 @@ whole fleet.
 Tested on **VMware Workstation 17 Pro 17.6.2 / Windows 11**, against real
 Windows 10, Ubuntu 24.04, Debian 12, and Kali media.
 
+```mermaid
+flowchart LR
+    U["You"] -->|"build me a Windows 10 lab VM"| C["Claude Code"]
+    C -->|"MCP over stdio"| S["<b>vmware-mcp</b><br/>57 tools"]
+    S -->|"vmrun · vmcli · VNC"| W["VMware Workstation 17"]
+    W --> V1["win10-lab"]
+    W --> V2["ubuntu-lab"]
+    W --> V3["kali-lab"]
+    V1 -.->|"run commands · copy files<br/>screenshots · snapshots"| S
+```
+
+New here? **[docs/architecture.md](docs/architecture.md)** is the guided tour —
+what it does, how the pieces fit, and diagrams of the install flow.
+
 ```jsonc
 // One call. Walk away. Come back to a machine you can run commands on.
 { "name": "win10-lab", "installIso": "win10.iso", "guestOsId": "windows9-64",
