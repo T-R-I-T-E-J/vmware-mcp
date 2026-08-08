@@ -69,7 +69,12 @@ export class VncClient {
 
   private write(b: Buffer): void {
     if (!this.socket) throw new Error("VNC socket is not connected");
-    this.socket.write(b);
+    this.socket.write(b, (err) => {
+      if (err && this.socket) {
+        this.socket.destroy();
+        this.socket = null;
+      }
+    });
   }
 
   async connect(): Promise<void> {
@@ -150,6 +155,11 @@ export class VncClient {
     this.width = init.readUInt16BE(0);
     this.height = init.readUInt16BE(2);
     const nameLen = init.readUInt32BE(20);
+    // A malicious or broken VNC server could send a huge name length, causing OOM.
+    // VMware's VNC server sends short names (the .vmx path), so 1024 is generous.
+    if (nameLen > 1024) {
+      throw new Error(`VNC server sent an implausible desktop name length (${nameLen}).`);
+    }
     this.name = nameLen > 0 ? (await this.read(nameLen)).toString("utf8") : "";
   }
 
