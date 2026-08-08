@@ -106,7 +106,74 @@ export function loadConfig(): Config {
   };
 
   fs.mkdirSync(cached.workDir, { recursive: true });
+
+  // Preflight: verify VM_ROOT is writable. A directory at a drive root (e.g.
+  // C:\VMs) inherits restrictive ACLs on Windows, and vmcli VM Create fails
+  // with an opaque "Create VM failed" message. Catch it early.
+  runVmRootPreflight(cached);
+
+  // Preflight: warn if VM_ROOT or ISO_LIBRARY is on a removable/USB drive.
+  // Guest I/O on USB dies under sustained mixed random I/O — the failure
+  // surfaces 40+ minutes into an install as squashfs read errors.
+  runDriveTypePreflight(cached);
+
   return cached;
+}
+
+function runVmRootPreflight(cfg: Config): void {
+  const vmRoot = cfg.vmRoot;
+  try {
+    fs.mkdirSync(vmRoot, { recursive: true });
+  } catch (e) {
+    throw new Error(
+      `VM_ROOT (${vmRoot}) cannot be created. Check that the drive exists and the path is valid. ` +
+        `Underlying error: ${(e as Error).message}`,
+    );
+  }
+  const probe = path.join(vmRoot, ".vmware-mcp-writetest");
+  try {
+    fs.writeFileSync(probe, "ok", "utf8");
+    fs.rmSync(probe, { force: true });
+  } catch (e) {
+    throw new Error(
+      `VM_ROOT (${vmRoot}) is not writable. vmcli VM Create requires write access to this directory. ` +
+        `Try a path under your user profile (e.g. C:\\Users\\<you>\\VMs) or check ACLs. ` +
+        `Underlying error: ${(e as Error).message}`,
+    );
+  }
+
+  // Warn if VM_ROOT is a first-level directory at a drive root.
+  const parsed = path.parse(path.resolve(vmRoot));
+  const parentDir = path.dirname(path.resolve(vmRoot));
+  const parentParsed = path.parse(parentDir);
+  if (parentParsed.root === parentDir) {
+    process.stderr.write(
+      `vmware-mcp: VM_ROOT is at a drive root (${parentDir}). On Windows this inherits restrictive ACLs ` +
+        `that can cause vmcli VM Create to fail with "Create VM failed". Consider moving it under ` +
+        `your user profile.\n`,
+    );
+  }
+}
+
+function runDriveTypePreflight(cfg: Config): void {
+  // Quick heuristic: check if the resolved path starts with a known-removable
+  // drive letter. A full Win32 API call (GetDriveType) would need native bindings,
+  // so this warns based on common USB drive letters as a best-effort guard.
+  const vmRootLetter = path.resolve(cfg.vmRoot).charAt(0).toUpperCase();
+  const isoLetter = path.resolve(cfg.isoLibrary).charAt(0).toUpperCase();
+
+  // D: and E: are commonly USB/CD-ROM; G: and higher are almost always USB on consumer Windows.
+  const suspiciousLetters = ["D", "E", "F", "G", "H", "I", "J", "K"];
+  for (const letter of suspiciousLetters) {
+    if (vmRootLetter === letter || isoLetter === letter) {
+      process.stderr.write(
+        `vmware-mcp: VM_ROOT or ISO_LIBRARY is on drive ${letter}:. USB/external drives cause guest ` +
+          `I/O errors during installs under sustained mixed random I/O. Use internal storage ` +
+          `(C:) if possible. See issue #14 for details.\n`,
+      );
+      break;
+    }
+  }
 }
 
 /**
