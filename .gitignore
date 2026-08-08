@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+*.tsbuildinfo
+
+# Generated seed ISOs, screenshots, and the VM registry live outside the repo,
+# but never let a stray copy in — answer files contain guest passwords.
+work/
+*.iso
+*.png
+credentials.json

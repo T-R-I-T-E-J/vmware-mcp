@@ -1,0 +1,25 @@
+{
+  "name": "vmware-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for VMware Workstation 17 Pro — create, provision, and control VMs and their guests",
+  "type": "module",
+  "bin": {
+    "vmware-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
