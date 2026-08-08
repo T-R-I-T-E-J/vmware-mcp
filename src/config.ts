@@ -141,11 +141,16 @@ export function saveCredential(ref: string, cred: GuestCredential): void {
     try {
       existing = JSON.parse(fs.readFileSync(credentialsFile, "utf8"));
     } catch {
-      /* overwrite a corrupt file rather than lose the new credential */
+      process.stderr.write(
+        `vmware-mcp: credentials file ${credentialsFile} is corrupt; overwriting with new contents.\n`,
+      );
     }
   }
   existing[ref] = cred;
-  fs.writeFileSync(credentialsFile, JSON.stringify(existing, null, 2), { mode: 0o600 });
+  // Atomic write: tmp + rename prevents a partially-written file on crash.
+  const tmp = `${credentialsFile}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(existing, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, credentialsFile);
 }
 
 /**
