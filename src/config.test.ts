@@ -1,48 +1,31 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vmmcp-cfg-test-"));
 const credFile = path.join(tmpRoot, "credentials.json");
+const vmRoot = path.join(tmpRoot, "vms");
 
-vi.mock("./config.js", async () => {
-  const actual = await vi.importActual<typeof import("./config.js")>("./config.js");
-  // We only override loadConfig — everything else uses the original implementation.
-  let cfgCache: ReturnType<typeof actual.loadConfig> | null = null;
-  return {
-    ...actual,
-    loadConfig: () => {
-      if (cfgCache) return cfgCache;
-      cfgCache = {
-        vmwareDir: "C:\\VMware",
-        vmrun: "C:\\VMware\\vmrun.exe",
-        vmcli: "C:\\VMware\\vmcli.exe",
-        vdiskmanager: "C:\\VMware\\vmware-vdiskmanager.exe",
-        toolsWindowsIso: null,
-        vmRoot: path.join(tmpRoot, "vms"),
-        isoLibrary: path.join(tmpRoot, "iso"),
-        extraVmPaths: [] as string[],
-        workDir: path.join(tmpRoot, "work"),
-        credentialsFile: credFile,
-        execTimeoutMs: 120000,
-        defaultConcurrency: 4,
-        maxRunningVms: 8,
-      };
-      return cfgCache;
-    },
-  };
+beforeAll(() => {
+  process.env.VM_ROOT = vmRoot;
+  process.env.ISO_LIBRARY = path.join(tmpRoot, "iso");
+  process.env.VMWARE_MCP_WORK_DIR = path.join(tmpRoot, "work");
+  process.env.VMWARE_MCP_CREDENTIALS = credFile;
+  fs.mkdirSync(vmRoot, { recursive: true });
+  fs.mkdirSync(path.join(tmpRoot, "iso"), { recursive: true });
+  fs.mkdirSync(path.join(tmpRoot, "work"), { recursive: true });
 });
 
-import { saveCredential, loadCredential, resolveCredential } from "./config.js";
-
-beforeEach(() => {
+afterAll(() => {
+  delete process.env.VM_ROOT;
+  delete process.env.VMWARE_MCP_CREDENTIALS;
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-afterEach(() => {
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
-});
+// Must come after env setup because loadConfig is called on import
+const configMod = await import("./config.js");
+const { saveCredential, loadCredential, resolveCredential } = configMod;
 
 describe("saveCredential and loadCredential", () => {
   it("writes and reads back a credential atomically", () => {
@@ -53,10 +36,7 @@ describe("saveCredential and loadCredential", () => {
   });
 
   it("recovery from corrupt credentials file by overwriting", () => {
-    const dir = path.dirname(credFile);
-    fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(credFile, "not valid json!!!", "utf8");
-    // Should not throw — overwrites the corrupt file with the new credential.
     saveCredential("fresh", { username: "u", password: "p" });
     const cred = loadCredential("fresh");
     expect(cred.username).toBe("u");
