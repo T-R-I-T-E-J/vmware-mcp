@@ -1,10 +1,13 @@
 import { z } from "zod";
+import fs from "node:fs";
+import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { loadConfig, resolveCredential } from "../config.js";
-import { selectRecords, type VmRecord } from "../registry.js";
+import { assertVmPathAllowed, resolveVmxByNameOrPath } from "../paths.js";
+import { selectRecords, upsertRecord, type VmRecord } from "../registry.js";
 import * as vmrun from "../vmrun.js";
 import { runFleet } from "../fleet.js";
-import { confirmArg, credArgs, defineTool, json, requireConfirm } from "./common.js";
+import { confirmArg, credArgs, defineTool, json, requireConfirm, vmArg } from "./common.js";
 
 const selectorArg = {
   selector: z
@@ -258,6 +261,69 @@ export function registerFleetTools(server: McpServer): void {
         a.maxConcurrency ?? cfg.defaultConcurrency,
       );
       return json(summary);
+    },
+  );
+
+  defineTool(
+    server,
+    "fleet_clone",
+    {
+      title: "Clone VMs from a template",
+      description:
+        "Build N identical VMs from one template in a single call. The template must be in the registry. Use a previously provisioned VM as the template, then linked clones make VM #2 onward in ~30 seconds and a few hundred MB each.",
+      inputSchema: {
+        ...vmArg,
+        count: z.number().int().min(1).max(50).default(1),
+        namePrefix: z.string().min(1).describe("Prefix for clone names, e.g. 'lab-node' produces lab-node-1, lab-node-2"),
+        mode: z.enum(["full", "linked"]).default("linked"),
+        snapshot: z.string().optional().describe("Required for linked mode; snapshot on the parent/template"),
+        tags: z.array(z.string()).default([]),
+        maxConcurrency: z.number().int().min(1).max(16).optional(),
+      },
+    },
+    async (a) => {
+      const cfg = loadConfig();
+      const srcVmx = resolveVmxByNameOrPath(a.vm);
+      const srcRec = selectRecords("*").find((r) => r.vmxPath.toLowerCase() === srcVmx.toLowerCase());
+      if (!srcRec) throw new Error("The source VM must be in the registry. Add it with register_vm first.");
+
+      if (a.mode === "linked" && !a.snapshot) {
+        throw new Error("Linked clones require a snapshot name on the parent VM.");
+      }
+
+      const items = Array.from({ length: a.count }, (_, i) => ({
+        index: i + 1,
+        name: a.count === 1 ? a.namePrefix : `${a.namePrefix}-${i + 1}`,
+      }));
+
+      const summary = await runFleet(
+        items,
+        (r) => r.name,
+        async (r) => {
+          const destDir = path.join(cfg.vmRoot, r.name);
+          assertVmPathAllowed(destDir);
+          if (fs.existsSync(destDir)) throw new Error(`Destination already exists: ${destDir}`);
+          const destVmx = path.join(destDir, `${r.name}.vmx`);
+          await vmrun.clone(srcVmx, destVmx, a.mode, { snapshot: a.snapshot, cloneName: r.name });
+          upsertRecord({
+            name: r.name,
+            vmxPath: destVmx,
+            guestOsId: srcRec.guestOsId,
+            osFamily: srcRec.osFamily,
+            lifecycle: "created",
+            credentialRef: srcRec.credentialRef,
+            tags: a.tags,
+          });
+          return { vmxPath: destVmx };
+        },
+        a.maxConcurrency ?? cfg.defaultConcurrency,
+      );
+
+      return json({
+        clonedFrom: srcRec.name,
+        mode: a.mode,
+        ...summary,
+      });
     },
   );
 }
