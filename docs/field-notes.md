@@ -1,8 +1,22 @@
 # Field notes: seven failure modes in unattended VM provisioning on VMware Workstation 17.6.2
 
-> Written as a GitHub issue. Everything below was observed on real hardware —
-> Windows 11 Home Single Language, VMware Workstation 17 Pro 17.6.2, 16 GB RAM —
-> while building and testing this server. Nothing here is from documentation.
+> Everything below was observed on real hardware — Windows 11 Home Single
+> Language, VMware Workstation 17 Pro 17.6.2, 16 GB RAM — while building and
+> testing this server. Nothing here is from documentation.
+
+Each is also filed as an issue:
+
+| Issue | State | |
+|---|---|---|
+| [#1](../../issues/1) | open | `vmcli MKS sendKeyEvent` is a silent no-op |
+| [#2](../../issues/2) | open | `vmrun captureScreen` requires a guest login |
+| [#3](../../issues/3) | fixed | "architecture not supported" is really a DNS failure |
+| [#4](../../issues/4) | fixed | Bootloader drops keystrokes under memory pressure |
+| [#5](../../issues/5) | fixed | Windows Setup rejects the answer file's `<ProductKey>` |
+| [#6](../../issues/6) | fixed | `vmcli VM Create` emits its own disk and a RAM cap |
+
+#1 and #2 stay open: both are defects in VMware Workstation itself, worked
+around here but unresolved upstream.
 
 Unattended OS installation is one of the most failure-prone things in
 automation, and it is worth being explicit about *why*: you are driving three
