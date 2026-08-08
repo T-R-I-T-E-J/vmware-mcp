@@ -32,6 +32,7 @@ export class VncClient {
   private socket: net.Socket | null = null;
   private buffer = Buffer.alloc(0);
   private waiters: Array<{ need: number; resolve: (b: Buffer) => void; reject: (e: Error) => void }> = [];
+  private writeError: Error | null = null;
   width = 0;
   height = 0;
   name = "";
@@ -70,11 +71,19 @@ export class VncClient {
   private write(b: Buffer): void {
     if (!this.socket) throw new Error("VNC socket is not connected");
     this.socket.write(b, (err) => {
-      if (err && this.socket) {
-        this.socket.destroy();
-        this.socket = null;
+      if (err) {
+        this.writeError = err;
+        if (this.socket) {
+          this.socket.destroy();
+          this.socket = null;
+        }
       }
     });
+  }
+
+  /** Throw if any previous write failed. Called after all keystrokes are sent. */
+  assertNoWriteError(): void {
+    if (this.writeError) throw this.writeError;
   }
 
   async connect(): Promise<void> {
@@ -246,6 +255,9 @@ export async function playBootCommand(
     }
     // Let the last writes drain before tearing the socket down.
     await sleep(150);
+    // Detect async write failures that occurred during key events. Writing is
+    // fire-and-forget, so a broken connection can silently lose keystrokes.
+    client.assertNoWriteError();
   } finally {
     client.close();
   }

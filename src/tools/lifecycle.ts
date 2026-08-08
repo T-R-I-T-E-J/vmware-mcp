@@ -505,6 +505,15 @@ export function registerLifecycleTools(server: McpServer): void {
       const srcRec = listRecords().find((r) => r.vmxPath.toLowerCase() === srcVmx.toLowerCase());
       if (!srcRec) throw new Error("The source VM must be in the registry. Add it with register_vm first.");
 
+      // Reject duplicate registry names before cloning, not after. upsertRecord
+      // replaces the existing entry, which would orphan the original VM.
+      const existing = getRecord(a.destName);
+      if (existing) {
+        throw new Error(
+          `"${a.destName}" is already in the registry (VM at ${existing.vmxPath}). Choose a different destName.`,
+        );
+      }
+
       const destDir = path.join(cfg.vmRoot, a.destName);
       assertVmPathAllowed(destDir);
       if (fs.existsSync(destDir)) throw new Error(`Destination directory already exists: ${destDir}`);
@@ -515,7 +524,14 @@ export function registerLifecycleTools(server: McpServer): void {
         throw new Error("Linked clones require a snapshot name on the parent VM.");
       }
 
-      await vmrun.clone(srcVmx, destVmx, a.mode, { snapshot: a.snapshot, cloneName: a.destName });
+      try {
+        await vmrun.clone(srcVmx, destVmx, a.mode, { snapshot: a.snapshot, cloneName: a.destName });
+      } catch (e) {
+        // vmrun.clone may create a partial directory before failing. Clean it up
+        // so retries don't hit the "already exists" guard above.
+        fs.rmSync(destDir, { recursive: true, force: true });
+        throw e;
+      }
 
       const created = upsertRecord({
         name: a.destName,

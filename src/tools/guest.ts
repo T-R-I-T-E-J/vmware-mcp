@@ -557,6 +557,7 @@ export function registerGuestTools(server: McpServer): void {
         toPath: z.string().describe("New path inside the guest"),
         ...credArgs,
       },
+      destructive: true,
     },
     async (a) => {
       const vmx = resolveVmxByNameOrPath(a.vm);
