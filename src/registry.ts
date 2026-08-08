@@ -49,6 +49,8 @@ export function readRegistry(): RegistryFile {
     return parsed;
   } catch {
     // A corrupt registry must not brick the server — VMs are discoverable from disk.
+    // But we must warn, because silent data loss masks the real problem.
+    process.stderr.write(`vmware-mcp: registry ${p} is corrupt; returning empty inventory. The file should be deleted and VMs re-registered.\n`);
     return emptyRegistry();
   }
 }
