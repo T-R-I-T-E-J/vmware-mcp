@@ -26,6 +26,11 @@ possible.
 > silently does nothing — see **[docs/field-notes.md](docs/field-notes.md)** for
 > the seven failure modes and how each was diagnosed.
 
+**Project status:** ~22 of 57 tools are verified against real hardware; the rest
+are built but unproven, pending a completed guest install. What is done, what is
+unverified, and what is missing is tracked honestly in
+**[ROADMAP.md](ROADMAP.md)**.
+
 ## What it can do
 
 | Area | Tools |
