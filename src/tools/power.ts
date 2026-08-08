@@ -161,4 +161,36 @@ export function registerPowerTools(server: McpServer): void {
       return text(`Requested VMware Tools install for ${vmx}. The Tools ISO is now mounted in the guest.`);
     },
   );
+
+  defineTool(
+    server,
+    "pause_vm",
+    {
+      title: "Pause a VM",
+      description:
+        "Pause a running VM, freezing its execution state. Use unpause_vm to resume. Unlike suspend, the VM stays in memory and resumes instantly.",
+      inputSchema: { ...vmArg },
+    },
+    async (a) => {
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      await vmrun.pause(vmx);
+      return text(`Paused ${vmx}.`);
+    },
+  );
+
+  defineTool(
+    server,
+    "unpause_vm",
+    {
+      title: "Unpause a VM",
+      description:
+        "Resume a paused VM. The VM continues exactly where it was paused.",
+      inputSchema: { ...vmArg },
+    },
+    async (a) => {
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      await vmrun.unpause(vmx);
+      return text(`Unpaused ${vmx}.`);
+    },
+  );
 }
