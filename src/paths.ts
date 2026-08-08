@@ -26,15 +26,21 @@ function isInside(parent: string, child: string): boolean {
 function realpathTolerant(p: string): string {
   let current = path.resolve(p);
   const tail: string[] = [];
-  for (;;) {
-    if (fs.existsSync(current)) {
-      return path.join(fs.realpathSync.native(current), ...tail.reverse());
+  // Cap iteration depth to prevent infinite loops on pathological mounts.
+  for (let depth = 0; depth < 64; depth++) {
+    try {
+      if (fs.existsSync(current)) {
+        return path.join(fs.realpathSync.native(current), ...tail.reverse());
+      }
+    } catch {
+      // fs.existsSync can throw on deeply-nested or permission-denied paths.
     }
     const parent = path.dirname(current);
-    if (parent === current) return path.resolve(p);
+    if (parent === current) break; // hit the filesystem root
     tail.push(path.basename(current));
     current = parent;
   }
+  return path.resolve(p);
 }
 
 /**
