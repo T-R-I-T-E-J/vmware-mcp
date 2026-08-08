@@ -293,7 +293,7 @@ export function registerFleetTools(server: McpServer): void {
 
       const items = Array.from({ length: a.count }, (_, i) => ({
         index: i + 1,
-        name: a.count === 1 ? a.namePrefix : `${a.namePrefix}-${i + 1}`,
+        name: `${a.namePrefix}-${i + 1}`,
       }));
 
       const summary = await runFleet(
@@ -302,9 +302,24 @@ export function registerFleetTools(server: McpServer): void {
         async (r) => {
           const destDir = path.join(cfg.vmRoot, r.name);
           assertVmPathAllowed(destDir);
-          if (fs.existsSync(destDir)) throw new Error(`Destination already exists: ${destDir}`);
+          // mkdirSync with exclusive: a directory that already exists throws
+          // EEXIST, which is atomic — no TOCTOU window vs existsSync+clone.
+          try {
+            fs.mkdirSync(destDir, { recursive: true });
+          } catch (e) {
+            if (fs.existsSync(destDir)) {
+              throw new Error(`Destination already exists: ${destDir}`);
+            }
+            throw e;
+          }
           const destVmx = path.join(destDir, `${r.name}.vmx`);
-          await vmrun.clone(srcVmx, destVmx, a.mode, { snapshot: a.snapshot, cloneName: r.name });
+          try {
+            await vmrun.clone(srcVmx, destVmx, a.mode, { snapshot: a.snapshot, cloneName: r.name });
+          } catch (e) {
+            // vmrun.clone may leave partial files. Clean up so retries work.
+            fs.rmSync(destDir, { recursive: true, force: true });
+            throw e;
+          }
           upsertRecord({
             name: r.name,
             vmxPath: destVmx,

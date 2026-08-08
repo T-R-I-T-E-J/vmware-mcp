@@ -336,7 +336,7 @@ export function registerGuestTools(server: McpServer): void {
         try {
           entries = await vmrun.listDirectoryInGuest(cred, vmx, guestPath);
         } catch {
-          return files;
+          return [];
         }
         for (const entry of entries) {
           const full = guestPath.replace(/\/+$/, "") + "/" + entry;
@@ -356,6 +356,15 @@ export function registerGuestTools(server: McpServer): void {
       }
 
       const guestFiles = await listRecursive(a.guestDir);
+
+      if (guestFiles.length === 0) {
+        // Empty result could mean an empty directory OR a listing failure.
+        // Verify the source path actually exists so callers can distinguish.
+        const exists = await vmrun.directoryExistsInGuest(cred, vmx, a.guestDir).catch(() => false);
+        if (!exists) {
+          throw new Error(`Guest path does not exist or is not a directory: ${a.guestDir}`);
+        }
+      }
 
       let copied = 0;
       let failed = 0;
