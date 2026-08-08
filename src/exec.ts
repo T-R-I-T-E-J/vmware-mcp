@@ -59,7 +59,7 @@ export interface RunOptions {
 export function run(file: string, argv: string[], opts: RunOptions = {}): Promise<ExecResult> {
   const cfg = loadConfig();
   const timeout = opts.timeoutMs ?? cfg.execTimeoutMs;
-  const maxBuffer = opts.maxBufferBytes ?? 16 * 1024 * 1024;
+  const maxBuffer = Math.max(1024, opts.maxBufferBytes ?? 16 * 1024 * 1024);
 
   return new Promise((resolve, reject) => {
     execFile(
@@ -67,14 +67,27 @@ export function run(file: string, argv: string[], opts: RunOptions = {}): Promis
       argv,
       { timeout, maxBuffer, windowsHide: true, encoding: "utf8" },
       (err, stdout, stderr) => {
+        let exitCode = 0;
+        if (err) {
+          // execFile sets err.code for launch errors (ENOENT, etc.), and
+          // err.signal for processes killed by signal. For non-zero exits,
+          // the exit code lives on err itself, not err.code.
+          const e = err as NodeJS.ErrnoException & { signal?: string; status?: number };
+          if (e.status !== undefined && e.status !== null) {
+            exitCode = e.status;
+          } else if (typeof e.code === "number") {
+            exitCode = e.code;
+          } else if (e.signal) {
+            exitCode = 128 + (typeof e.signal === "string" && e.signal.startsWith("SIG") ? 0 : 0) + 1;
+          } else {
+            exitCode = 1;
+          }
+        }
+
         const result: ExecResult = {
           stdout: String(stdout ?? ""),
           stderr: String(stderr ?? ""),
-          code: err && typeof (err as NodeJS.ErrnoException).code === "number"
-            ? ((err as unknown as { code: number }).code)
-            : err
-              ? 1
-              : 0,
+          code: exitCode,
         };
         const shown = `${quoteForDisplay(file)} ${redactArgv(argv)}`;
 
@@ -88,7 +101,18 @@ export function run(file: string, argv: string[], opts: RunOptions = {}): Promis
           );
           return;
         }
-        const detail = (result.stderr || result.stdout).trim().split("\n")[0] ?? err.message;
+        // maxBuffer exceeded: output was truncated. Include what we captured.
+        if ((err as NodeJS.ErrnoException).code === "ENOBUFS") {
+          reject(
+            new ExecError(
+              `Output exceeded ${maxBuffer} bytes (maxBuffer): ${shown}`,
+              result,
+              shown,
+            ),
+          );
+          return;
+        }
+        const detail = (result.stderr || result.stdout).trim().split("\n")[0] || err.message;
         reject(new ExecError(`${shown} failed: ${detail}`, result, shown));
       },
     );
