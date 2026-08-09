@@ -250,14 +250,21 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
     }
 
     // ---------------------------------------------------------------- wait
+    //
+    // Accept "installed" as well as "running". open-vm-tools frequently settles
+    // on `installed` after a fresh install — the service is up and guest
+    // operations partly work, but VMware never completes the version handshake
+    // until something nudges it. Waiting for `running` means sitting out the
+    // entire timeout on a VM that is actually fine.
     const deadline = Date.now() + req.installTimeoutMin * 60_000;
+    const toolsPresent = (s: string) => s === "running" || s === "installed";
     let toolsState = await vmrun.checkToolsState(vmxPath);
-    while (toolsState !== "running" && Date.now() < deadline) {
+    while (!toolsPresent(toolsState) && Date.now() < deadline) {
       await sleep(20_000);
       toolsState = await vmrun.checkToolsState(vmxPath);
     }
 
-    if (toolsState !== "running") {
+    if (!toolsPresent(toolsState)) {
       const shot = await grabScreenshot(vmxPath).catch(() => undefined);
       updateRecord(req.name, { lifecycle: "failed", lastError: "Tools never came up" });
       throw new Error(
@@ -268,9 +275,11 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
     note(`VMware Tools is running after ${Math.round((Date.now() - started) / 60000)} min.`);
 
     // ---------------------------------------------------------------- verify login
-    // Tools can report running before the account is usable, so prove it.
+    // Tools reporting present does not mean the account is usable, so prove it
+    // by running a real command as the new user.
     let loginVerified = false;
-    const loginDeadline = Date.now() + 10 * 60_000;
+    const loginDeadline = Date.now() + 12 * 60_000;
+    let nudged = false;
     while (!loginVerified && Date.now() < loginDeadline) {
       const probe = await vmrun
         .runProgramInGuest(
@@ -281,8 +290,25 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
           { timeoutMs: 60_000 },
         )
         .catch(() => null);
-      if (probe && probe.code === 0) loginVerified = true;
-      else await sleep(15_000);
+      if (probe && probe.code === 0) {
+        loginVerified = true;
+        break;
+      }
+
+      // Half way through, if Tools is stuck at "installed", reboot once. That
+      // completes the handshake in practice; observed on Kali, where guest ops
+      // went from failing to working immediately afterwards. Cheaper than
+      // failing the whole provision on a VM that has installed correctly.
+      if (!nudged && Date.now() > loginDeadline - 6 * 60_000) {
+        nudged = true;
+        const state = await vmrun.checkToolsState(vmxPath);
+        if (state !== "running") {
+          note(`Tools stuck at "${state}" and guest commands failing — rebooting once to complete the handshake.`);
+          await vmrun.reset(vmxPath, "soft").catch(() => undefined);
+          await sleep(60_000);
+        }
+      }
+      await sleep(15_000);
     }
 
     const screenshot = await grabScreenshot(vmxPath).catch(() => undefined);

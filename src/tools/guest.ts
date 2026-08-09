@@ -23,13 +23,21 @@ function credFor(vmx: string, a: { credentialRef?: string; guestUser?: string; g
   );
 }
 
+/**
+ * Guard guest operations on Tools being present.
+ *
+ * Deliberately accepts "installed" as well as "running". open-vm-tools on Kali
+ * reported `installed` while the service was active and enabled, and guest
+ * operations partly worked in that state — refusing outright blocked tools that
+ * would have succeeded. Let the operation itself fail with the real error rather
+ * than pre-emptively rejecting on a state VMware reports inconsistently.
+ */
 async function assertToolsRunning(vmx: string): Promise<void> {
   const state = await vmrun.checkToolsState(vmx);
-  if (state !== "running") {
-    throw new Error(
-      `VMware Tools is "${state}" in this guest, so guest operations are unavailable. Power the VM on and wait_for_tools; if the OS is installed but Tools is not, install open-vm-tools (Linux) or run the Tools installer (Windows).`,
-    );
-  }
+  if (state === "running" || state === "installed") return;
+  throw new Error(
+    `VMware Tools is "${state}" in this guest, so guest operations are unavailable. Power the VM on and wait_for_tools; if the OS is installed but Tools is not, install open-vm-tools (Linux) or run the Tools installer (Windows).`,
+  );
 }
 
 export function registerGuestTools(server: McpServer): void {

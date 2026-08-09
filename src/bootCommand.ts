@@ -46,7 +46,11 @@ export function defaultBootCommand(kind: InstallerKind, ctx: BootCommandContext 
         bootWaitSec: 12,
         // Esc leaves the graphical isolinux menu for a plain `boot:` prompt,
         // where `auto url=` fetches the preseed over HTTP.
-        command: `<esc><wait2>auto url=${ctx.seedUrl ?? "http://SEED_URL"}/p<enter>`,
+        // locale and keymap must ride the kernel command line: debian-installer
+        // asks them before it fetches the preseed, so setting them in the
+        // preseed file is too late and the UI comes up in whatever the
+        // installer defaulted to (observed: Polish). See #16.
+        command: `<esc><wait2>auto locale=en_US keymap=us url=${ctx.seedUrl ?? "http://SEED_URL"}/p<enter>`,
         // Deliberately slow. At 60ms a loaded host dropped characters and the
         // prompt received "uto url=http:" instead of the full URL, which fails
         // silently — the installer just sits at its menu.
@@ -57,7 +61,11 @@ export function defaultBootCommand(kind: InstallerKind, ctx: BootCommandContext 
     case "kali":
       return {
         bootWaitSec: 14,
-        command: `<esc><wait2>auto url=${ctx.seedUrl ?? "http://SEED_URL"}/p<enter>`,
+        // locale and keymap must ride the kernel command line: debian-installer
+        // asks them before it fetches the preseed, so setting them in the
+        // preseed file is too late and the UI comes up in whatever the
+        // installer defaulted to (observed: Polish). See #16.
+        command: `<esc><wait2>auto locale=en_US keymap=us url=${ctx.seedUrl ?? "http://SEED_URL"}/p<enter>`,
         // Deliberately slow. At 60ms a loaded host dropped characters and the
         // prompt received "uto url=http:" instead of the full URL, which fails
         // silently — the installer just sits at its menu.
