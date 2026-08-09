@@ -25,10 +25,16 @@ Verification means the tool ran against real hardware and did what it claimed.
 | Fleet | `fleet_status` |
 | Internals | path allowlist, `confirm: true` gates, IMAPI2 seed ISO, sha512-crypt |
 
-`provision_vm` is **verified** on both Linux paths: Kali 2024.4 (preseed over
-HTTP) and Ubuntu 24.04 (cloud-init `CIDATA` seed) each went from a blank disk to
-`ready`. Kali also exercised the boot-command retry path — attempts 1 and 2
-dropped keystrokes, attempt 3 landed. Windows is still in progress.
+`provision_vm` is **verified on all three delivery paths**, each from a blank
+disk to `ready`:
+
+- **Kali 2024.4** — preseed over HTTP. Also exercised the boot-command retry
+  path: attempts 1 and 2 dropped keystrokes, attempt 3 landed.
+- **Ubuntu 24.04** — cloud-init `CIDATA` seed ISO, GRUB line-edit boot command.
+- **Windows 10 Pro** — `autounattend.xml` on a seed CD, auto-logon, VMware Tools
+  installed at first logon. 7/7 guest checks pass.
+
+Windows Server 2019 is the remaining untested guest.
 
 ### Built, not yet verified ⛔
 
@@ -114,7 +120,7 @@ but no tool accepts it), ISO library subdirectory scanning.
 
 | Guest | Path | State |
 |---|---|---|
-| Windows 10 | `autounattend.xml` on seed CD | Installs unattended; OOBE, auto-logon, and Tools install unverified |
+| Windows 10 | `autounattend.xml` on seed CD | **✅ Verified end to end — reached `ready`, 7/7 guest checks** |
 | Ubuntu 24.04 desktop | cloud-init `CIDATA` seed | **✅ Verified end to end — reached `ready`** |
 | Debian 12 | preseed over HTTP | Reaches package install; completion unverified |
 | Kali 2024.4 | preseed over HTTP (Kali mirror) | **✅ Verified end to end — reached `ready`** |
