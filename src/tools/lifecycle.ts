@@ -217,14 +217,23 @@ export function registerLifecycleTools(server: McpServer): void {
       if (!fs.existsSync(cfg.isoLibrary)) {
         return text(`ISO library ${cfg.isoLibrary} does not exist. Set ISO_LIBRARY.`);
       }
-      const isos = fs
-        .readdirSync(cfg.isoLibrary, { withFileTypes: true })
-        .filter((d) => d.isFile() && d.name.toLowerCase().endsWith(".iso"))
-        .map((d) => {
-          const full = path.join(cfg.isoLibrary, d.name);
-          return { name: d.name, path: full, sizeMb: Math.round(fs.statSync(full).size / 1048576) };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name));
+      // Walk subdirectories too: people organise media as iso/windows, iso/linux.
+      // `name` stays relative to the library so it can be passed straight back
+      // to create_vm / provision_vm.
+      const isos: Array<{ name: string; path: string; sizeMb: number }> = [];
+      const walk = (dir: string, prefix: string, depth: number) => {
+        if (depth > 4) return;
+        for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, d.name);
+          const rel = prefix ? `${prefix}/${d.name}` : d.name;
+          if (d.isDirectory()) walk(full, rel, depth + 1);
+          else if (d.isFile() && d.name.toLowerCase().endsWith(".iso")) {
+            isos.push({ name: rel, path: full, sizeMb: Math.round(fs.statSync(full).size / 1048576) });
+          }
+        }
+      };
+      walk(cfg.isoLibrary, "", 0);
+      isos.sort((a, b) => a.name.localeCompare(b.name));
       return json({ isoLibrary: cfg.isoLibrary, count: isos.length, isos });
     },
   );

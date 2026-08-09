@@ -1,15 +1,40 @@
 import { loadConfig, type GuestCredential } from "./config.js";
 import { run, type ExecResult, type RunOptions } from "./exec.js";
 
-/** Global flags must precede the command; guest creds are global flags. */
-function baseArgs(cred?: GuestCredential): string[] {
+/**
+ * Encryption passwords for encrypted VMs, keyed by lowercased .vmx path.
+ *
+ * Held in memory for the process lifetime only — never written to disk, unlike
+ * guest credentials, because a VM encryption password protects the disk itself.
+ * Supplied via the set_vm_password tool and re-supplied after a restart.
+ */
+const vmPasswords = new Map<string, string>();
+
+export function setVmPassword(vmx: string, password: string): void {
+  vmPasswords.set(vmx.toLowerCase(), password);
+}
+
+/** Find the .vmx among a command's arguments so its password can be attached. */
+function vmPasswordFor(argv: readonly string[]): string | undefined {
+  for (const a of argv) {
+    if (a.toLowerCase().endsWith(".vmx")) {
+      const p = vmPasswords.get(a.toLowerCase());
+      if (p) return p;
+    }
+  }
+  return undefined;
+}
+
+/** Global flags must precede the command; guest creds and -vp are global flags. */
+function baseArgs(cred: GuestCredential | undefined, vmPassword: string | undefined): string[] {
   const args = ["-T", "ws"];
+  if (vmPassword) args.push("-vp", vmPassword);
   if (cred) args.push("-gu", cred.username, "-gp", cred.password);
   return args;
 }
 
 export function vmrun(argv: string[], opts?: RunOptions): Promise<ExecResult> {
-  return run(loadConfig().vmrun, [...baseArgs(), ...argv], opts);
+  return run(loadConfig().vmrun, [...baseArgs(undefined, vmPasswordFor(argv)), ...argv], opts);
 }
 
 export function vmrunGuest(
@@ -17,7 +42,7 @@ export function vmrunGuest(
   argv: string[],
   opts?: RunOptions,
 ): Promise<ExecResult> {
-  return run(loadConfig().vmrun, [...baseArgs(cred), ...argv], opts);
+  return run(loadConfig().vmrun, [...baseArgs(cred, vmPasswordFor(argv)), ...argv], opts);
 }
 
 // ---------------------------------------------------------------- power
