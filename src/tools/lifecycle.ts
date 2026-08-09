@@ -495,6 +495,9 @@ export function registerLifecycleTools(server: McpServer): void {
     async (a) => {
       const vmx = resolveVmxByNameOrPath(a.vm);
       const parsed = parseVmx(vmx);
+      // Read the family from the .vmx rather than defaulting to "other": an
+      // "other" family is treated as Linux downstream, so a Windows VM adopted
+      // this way was handed /bin/bash by guest_exec_capture and fleet_run (#24).
       const guestOsId = a.guestOsId ?? parsed.get("guestos") ?? "other";
       const name =
         a.name ?? parsed.get("displayname") ?? path.basename(path.dirname(vmx)).replace(/\.vmwarevm$/i, "");

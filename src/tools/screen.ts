@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -30,9 +31,34 @@ export function vncPortFor(vmx: string): { port: number; password?: string } {
   return { port, password: cfg.get("remotedisplay.vnc.key") ? undefined : cfg.get("remotedisplay.vnc.password") };
 }
 
-/** Pick a VNC port not already claimed by another VM we manage. */
+/**
+ * Ports handed out during this process's lifetime but not yet written to a .vmx.
+ *
+ * Without this the allocator was a time-of-check/time-of-use race: it scanned
+ * the registry for used ports, so two create_vm calls racing before either had
+ * written its record both picked the same one. The second VM then fails to bind
+ * and `send_keys` silently drives the wrong machine — a far worse outcome than a
+ * clean error.
+ */
+const reservedVncPorts = new Set<number>();
+
+/** Ports currently bound by anything on this host, VMware or otherwise. */
+function portIsBusy(port: number): boolean {
+  try {
+    const out = execFileSync("netstat", ["-ano", "-p", "tcp"], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 10_000,
+    });
+    return new RegExp(`[:.]${port}\\s+.*LISTENING`, "i").test(out);
+  } catch {
+    return false; // netstat unavailable — fall back to the .vmx scan alone
+  }
+}
+
+/** Pick a VNC port not claimed by another VM, a pending allocation, or a live listener. */
 export function allocateVncPort(): number {
-  const used = new Set<number>();
+  const used = new Set<number>(reservedVncPorts);
   for (const rec of listRecords()) {
     try {
       const c = parseVmx(rec.vmxPath);
@@ -42,8 +68,17 @@ export function allocateVncPort(): number {
       /* a VM whose .vmx has gone missing simply contributes no port */
     }
   }
-  for (let p = 5910; p < 6000; p++) if (!used.has(p)) return p;
+  for (let p = 5910; p < 6000; p++) {
+    if (used.has(p) || portIsBusy(p)) continue;
+    reservedVncPorts.add(p);
+    return p;
+  }
   throw new Error("No free VNC port in the range 5910-5999.");
+}
+
+/** Release a reservation whose VM was never created. */
+export function releaseVncPort(port: number): void {
+  reservedVncPorts.delete(port);
 }
 
 /**

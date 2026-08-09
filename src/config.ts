@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import { execFileSync } from "node:child_process";
 
 /** Guest credentials for VMware Tools guest operations. */
 export interface GuestCredential {
@@ -138,6 +139,50 @@ export function loadCredential(ref: string): GuestCredential {
   return cred;
 }
 
+/**
+ * Restrict a file to the current user.
+ *
+ * `writeFileSync`'s `mode: 0o600` is close to meaningless on Windows — POSIX
+ * mode bits do not map onto NTFS ACLs, and the credentials file came out
+ * world-readable in practice. `icacls` is the only thing that actually applies.
+ */
+function restrictToCurrentUser(file: string): void {
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
+    return;
+  }
+  const user = process.env.USERNAME;
+  if (!user) return;
+  try {
+    execFileSync("icacls", [file, "/inheritance:r", "/grant:r", `${user}:F`], {
+      stdio: "ignore",
+      windowsHide: true,
+      timeout: 15_000,
+    });
+  } catch {
+    // Not fatal — the file is still written. Surfaced by checkCredentialsFilePermissions().
+  }
+}
+
+/**
+ * True when the credentials file is readable by anyone beyond its owner.
+ * Reported at startup so a false sense of security is not left standing.
+ */
+export function credentialsFileIsExposed(): boolean {
+  const { credentialsFile } = loadConfig();
+  if (!fs.existsSync(credentialsFile) || process.platform !== "win32") return false;
+  try {
+    const acl = execFileSync("icacls", [credentialsFile], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 15_000,
+    });
+    return /\b(Everyone|BUILTIN\\Users|Authenticated Users)\b/i.test(acl);
+  } catch {
+    return false;
+  }
+}
+
 export function saveCredential(ref: string, cred: GuestCredential): void {
   const { credentialsFile } = loadConfig();
   fs.mkdirSync(path.dirname(credentialsFile), { recursive: true });
@@ -151,6 +196,8 @@ export function saveCredential(ref: string, cred: GuestCredential): void {
   }
   existing[ref] = cred;
   fs.writeFileSync(credentialsFile, JSON.stringify(existing, null, 2), { mode: 0o600 });
+  // mode: 0o600 alone does nothing useful on Windows; apply a real ACL.
+  restrictToCurrentUser(credentialsFile);
 }
 
 /**

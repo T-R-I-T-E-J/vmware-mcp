@@ -47,6 +47,27 @@ function decodeGuestText(buf: Buffer): string {
 }
 
 /**
+ * Decide whether a guest is Windows, probing when the registry cannot say.
+ *
+ * The registry's `osFamily` is authoritative when it is "windows", and anything
+ * else used to be assumed Linux — so a VM adopted by `register_vm` whose .vmx
+ * carried no usable `guestOS` (family "other") was handed `/bin/bash` and failed
+ * confusingly (#24). When the family is genuinely unknown, ask the guest: a
+ * one-shot `fileExistsInGuest` costs a round trip and removes the guess.
+ */
+export async function guestIsWindows(
+  vmx: string,
+  cred: GuestCredential,
+  osFamily: string | undefined,
+): Promise<boolean> {
+  if (osFamily === "windows") return true;
+  if (osFamily === "debian" || osFamily === "ubuntu") return false;
+  return vmrun
+    .fileExistsInGuest(cred, vmx, "C:\\Windows\\System32\\kernel32.dll")
+    .catch(() => false);
+}
+
+/**
  * Guard guest operations on Tools being present.
  *
  * Deliberately accepts "installed" as well as "running". open-vm-tools on Kali
@@ -184,7 +205,7 @@ export function registerGuestTools(server: McpServer): void {
           ? true
           : a.shell === "bash"
             ? false
-            : rec?.osFamily === "windows";
+            : await guestIsWindows(vmx, cred, rec?.osFamily);
 
       const stamp = `vmmcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const guestOut = isWindows ? `C:\\Windows\\Temp\\${stamp}.txt` : `/tmp/${stamp}.txt`;

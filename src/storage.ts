@@ -1,4 +1,5 @@
 import path from "node:path";
+import fsSync from "node:fs";
 import { run } from "./exec.js";
 
 /**
@@ -41,6 +42,42 @@ export async function busTypeFor(targetPath: string): Promise<BusType> {
   } catch {
     return "Unknown";
   }
+}
+
+/**
+ * Delete stale scratch files from the work directory.
+ *
+ * Screenshots accumulated forever — 31 after a single session of provisioning
+ * four VMs — and provisioning screenshots capture whatever was on the guest's
+ * screen at the time, which is not something to keep indefinitely by default.
+ * Seed ISOs are deliberately not matched here: those are deleted the moment
+ * provisioning finishes, because they contain the guest password in clear text.
+ */
+export function pruneWorkDir(workDir: string, maxAgeDays: number): { deleted: number; freedBytes: number } {
+  const cutoff = Date.now() - maxAgeDays * 86_400_000;
+  let deleted = 0;
+  let freedBytes = 0;
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = fsSync.readdirSync(workDir, { withFileTypes: true });
+  } catch {
+    return { deleted, freedBytes };
+  }
+  for (const e of entries) {
+    if (!e.isFile()) continue;
+    if (!/^(screen-|read-|write-|vmmcp-)/.test(e.name)) continue;
+    const full = path.join(workDir, e.name);
+    try {
+      const st = fsSync.statSync(full);
+      if (st.mtimeMs > cutoff) continue;
+      fsSync.rmSync(full, { force: true });
+      deleted++;
+      freedBytes += st.size;
+    } catch {
+      /* raced with something else; skip */
+    }
+  }
+  return { deleted, freedBytes };
 }
 
 export async function removableStorageWarnings(paths: Array<{ label: string; dir: string }>): Promise<string[]> {

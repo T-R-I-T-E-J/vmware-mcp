@@ -4,6 +4,7 @@ import { loadConfig, resolveCredential } from "../config.js";
 import { selectRecords, type VmRecord } from "../registry.js";
 import * as vmrun from "../vmrun.js";
 import { runFleet } from "../fleet.js";
+import { guestIsWindows } from "./guest.js";
 import { confirmArg, credArgs, defineTool, json, requireConfirm } from "./common.js";
 
 const selectorArg = {
@@ -175,7 +176,7 @@ export function registerFleetTools(server: McpServer): void {
               ? true
               : a.shell === "bash"
                 ? false
-                : r.osFamily === "windows";
+                : await guestIsWindows(r.vmxPath, cred, r.osFamily);
 
           // PowerShell for Windows unless cmd is explicitly demanded — cmd.exe
           // launched through VIX hangs indefinitely on Windows guests.

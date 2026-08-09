@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, credentialsFileIsExposed } from "./config.js";
 import { preflightStorage } from "./paths.js";
-import { removableStorageWarnings } from "./storage.js";
+import { removableStorageWarnings, pruneWorkDir } from "./storage.js";
 import { registerLifecycleTools } from "./tools/lifecycle.js";
 import { registerPowerTools } from "./tools/power.js";
 import { registerSnapshotTools } from "./tools/snapshots.js";
@@ -49,6 +49,27 @@ async function main(): Promise<void> {
   // Storage problems here fail slowly and misleadingly — a bad VM_ROOT surfaces
   // as vmcli's opaque "Create VM failed", and a USB drive as a guest I/O error
   // 40 minutes into an install. Say so up front instead.
+  // Bound the scratch directory (#25). Screenshots can show whatever was on a
+  // guest's screen, so they are not kept forever by default.
+  const retainDays = Number(process.env.VMWARE_MCP_WORK_RETENTION_DAYS ?? "7");
+  if (Number.isFinite(retainDays) && retainDays > 0) {
+    const pruned = pruneWorkDir(cfg.workDir, retainDays);
+    if (pruned.deleted > 0) {
+      process.stderr.write(
+        `vmware-mcp: pruned ${pruned.deleted} scratch file(s) older than ${retainDays}d (${Math.round(pruned.freedBytes / 1024)} KB)
+`,
+      );
+    }
+  }
+
+  // A credentials file readable by others is worth saying out loud (#21).
+  if (credentialsFileIsExposed()) {
+    process.stderr.write(
+      `vmware-mcp WARNING: ${cfg.credentialsFile} is readable beyond your account. It holds guest passwords in clear text. Fix with: icacls "${cfg.credentialsFile}" /inheritance:r /grant:r %USERNAME%:F
+`,
+    );
+  }
+
   const { errors, warnings } = preflightStorage();
   for (const e of errors) process.stderr.write(`vmware-mcp ERROR: ${e}\n`);
   for (const w of warnings) process.stderr.write(`vmware-mcp WARNING: ${w}\n`);
