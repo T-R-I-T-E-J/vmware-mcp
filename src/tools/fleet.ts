@@ -177,10 +177,12 @@ export function registerFleetTools(server: McpServer): void {
                 ? false
                 : r.osFamily === "windows";
 
+          // PowerShell for Windows unless cmd is explicitly demanded — cmd.exe
+          // launched through VIX hangs indefinitely on Windows guests.
           const interpreter = isWindows
-            ? a.shell === "powershell"
-              ? "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-              : "C:\\Windows\\System32\\cmd.exe"
+            ? a.shell === "cmd"
+              ? "C:\\Windows\\System32\\cmd.exe"
+              : "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
             : "/bin/bash";
 
           const res = await vmrun.runScriptInGuest(cred, r.vmxPath, interpreter, a.command, {

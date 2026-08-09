@@ -70,6 +70,26 @@ export interface ProvisionResult {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Prove a guest account works, without executing a program.
+ *
+ * `fileExistsInGuest` authenticates exactly like any other guest operation but
+ * runs nothing, which matters on Windows: **`cmd.exe` launched through VIX
+ * hangs indefinitely**. Verified on a healthy Windows 10 guest with VMware Tools
+ * 12.4.5 running — `whoami.exe` and `powershell.exe` return immediately, while
+ * `cmd.exe /c exit 0`, `cmd.exe /c dir`, and `runScriptInGuest` with cmd all
+ * time out, with or without `-interactive`. The old probe used
+ * `cmd.exe /c exit 0`, so a perfectly good Windows VM could never reach `ready`.
+ */
+async function probeCredentials(
+  cred: GuestCredential,
+  vmxPath: string,
+  isWindows: boolean,
+): Promise<boolean> {
+  const path = isWindows ? "C:\\Windows\\System32\\kernel32.dll" : "/bin/sh";
+  return vmrun.fileExistsInGuest(cred, vmxPath, path);
+}
+
+/**
  * Drive a VM from nothing to a logged-in, controllable guest.
  *
  * The phases are: create hardware → generate the answer file → deliver it (seed
@@ -108,7 +128,13 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
       memoryMb: req.memoryMb,
       cpus: req.cpus,
       diskGb: req.diskGb,
-      diskAdapter: "nvme",
+      // Windows guests get an LSI Logic SAS controller, not NVMe. WinPE's NVMe
+      // path on Workstation produced `0x800701B1` (ERROR_DEVICE_HARDWARE_ERROR)
+      // partway through copying files — the disk partitioned and formatted
+      // cleanly, then the copy died. LSI Logic SAS is also VMware's own
+      // recommendation for Windows. Linux is left on NVMe, where Kali and
+      // Ubuntu both installed without trouble.
+      diskAdapter: kind === "windows" ? "lsilogic" : "nvme",
       firmware: req.firmware,
       network: req.network,
       customVnet: req.customVnet,
@@ -281,16 +307,8 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
     const loginDeadline = Date.now() + 12 * 60_000;
     let nudged = false;
     while (!loginVerified && Date.now() < loginDeadline) {
-      const probe = await vmrun
-        .runProgramInGuest(
-          cred,
-          vmxPath,
-          kind === "windows" ? "C:\\Windows\\System32\\cmd.exe" : "/bin/true",
-          kind === "windows" ? ["/c", "exit", "0"] : [],
-          { timeoutMs: 60_000 },
-        )
-        .catch(() => null);
-      if (probe && probe.code === 0) {
+      const probe = await probeCredentials(cred, vmxPath, kind === "windows").catch(() => false);
+      if (probe) {
         loginVerified = true;
         break;
       }
@@ -343,7 +361,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
     });
     note("Ejected the install media; the VM now boots from its own disk.");
 
-    updateRecord(req.name, { lifecycle: "ready", credentialRef: req.credentialRef, seedIso });
+    updateRecord(req.name, { lifecycle: "ready", credentialRef: req.credentialRef, seedIso, lastError: undefined });
 
     return {
       name: req.name,
@@ -411,16 +429,7 @@ export async function finalizeProvision(o: FinalizeOptions): Promise<ProvisionRe
   let loginVerified = false;
   const loginDeadline = Date.now() + 10 * 60_000;
   while (!loginVerified && Date.now() < loginDeadline) {
-    const probe = await vmrun
-      .runProgramInGuest(
-        o.cred,
-        o.vmxPath,
-        o.isWindows ? "C:\\Windows\\System32\\cmd.exe" : "/bin/true",
-        o.isWindows ? ["/c", "exit", "0"] : [],
-        { timeoutMs: 60_000 },
-      )
-      .catch(() => null);
-    if (probe && probe.code === 0) loginVerified = true;
+    if (await probeCredentials(o.cred, o.vmxPath, o.isWindows).catch(() => false)) loginVerified = true;
     else await sleep(15_000);
   }
   if (!loginVerified) {
@@ -448,7 +457,8 @@ export async function finalizeProvision(o: FinalizeOptions): Promise<ProvisionRe
     note(`Took snapshot "${snapshot}".`);
   }
 
-  updateRecord(o.name, { lifecycle: "ready" });
+  // Clear any error from an earlier failed attempt; the VM is good now.
+  updateRecord(o.name, { lifecycle: "ready", lastError: undefined });
   const screenshot = await grabScreenshot(o.vmxPath).catch(() => undefined);
 
   return {

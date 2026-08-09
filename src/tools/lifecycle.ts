@@ -25,6 +25,32 @@ export const GUEST_OS_IDS = [
   "other6xlinux-64",
 ] as const;
 
+/**
+ * The only guest OS ids `vmcli VM Create` will accept. Anything else is
+ * rejected outright with "Invalid argument".
+ *
+ * Notably there is **no Windows Server id at all** — `windows9srv-64` and
+ * friends are valid values for the `guestOS` key in a .vmx, but vmcli refuses
+ * them on the command line. So a Server VM is created with an accepted id and
+ * the .vmx is patched afterwards to the id we actually want.
+ */
+const VMCLI_GUEST_IDS = new Set([
+  "debian12-64", "debian13-64", "centos8-64", "centos9-64", "other6xlinux-64",
+  "windows11-64", "windows9-64", "fedora-64", "rhel9-64", "rhel10-64",
+  "opensuse-64", "ubuntu-64", "vmware-photon-64",
+]);
+
+/** An id vmcli accepts that is closest to what the caller asked for. */
+function vmcliCreateId(guestOsId: string): string {
+  if (VMCLI_GUEST_IDS.has(guestOsId)) return guestOsId;
+  const g = guestOsId.toLowerCase();
+  if (g.startsWith("win")) return g.includes("11") ? "windows11-64" : "windows9-64";
+  if (g.startsWith("ubuntu")) return "ubuntu-64";
+  if (g.startsWith("debian")) return "debian12-64";
+  if (g.startsWith("rhel") || g.startsWith("centos")) return "centos9-64";
+  return "other6xlinux-64";
+}
+
 export function osFamilyForGuestId(guestOsId: string): "windows" | "debian" | "ubuntu" | "other" {
   const g = guestOsId.toLowerCase();
   if (g.startsWith("win")) return "windows";
@@ -86,7 +112,8 @@ export async function createVmCore(a: CreateVmArgs): Promise<CreateVmResult> {
   }
 
   fs.mkdirSync(vmDir, { recursive: true });
-  await vmcli.createVm(a.name, vmDir, a.guestOsId);
+  const createId = vmcliCreateId(a.guestOsId);
+  await vmcli.createVm(a.name, vmDir, createId);
 
   const vmxPath = findVmxInDir(vmDir);
   if (!vmxPath) throw new Error(`vmcli VM Create did not produce a .vmx in ${vmDir}.`);
@@ -109,6 +136,11 @@ export async function createVmCore(a: CreateVmArgs): Promise<CreateVmResult> {
 
   const changes: Record<string, string | null> = {
     displayName: a.name,
+    // Restore the guest OS id the caller asked for. vmcli may have been given a
+    // stand-in because it accepts only a short list of ids, but the .vmx accepts
+    // the full set — and the value matters, since VMware picks default devices
+    // and Tools behaviour from it.
+    guestOS: a.guestOsId,
     memsize: String(a.memoryMb),
     // vmcli writes a memory.maxsize cap alongside its 512 MB default; leaving it
     // would silently clamp the RAM the caller asked for.

@@ -32,6 +32,29 @@ function credFor(vmx: string, a: { credentialRef?: string; guestUser?: string; g
  * would have succeeded. Let the operation itself fail with the real error rather
  * than pre-emptively rejecting on a state VMware reports inconsistently.
  */
+/**
+ * Decode text captured from a guest, honouring a byte-order mark.
+ *
+ * Windows PowerShell writes UTF-16LE by default, so output redirected inside a
+ * Windows guest comes back as `W\0I\0N\0…` if read as UTF-8. Linux guests write
+ * plain UTF-8. Sniffing the BOM handles both without having to know which guest
+ * produced the file.
+ */
+function decodeGuestText(buf: Buffer): string {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return buf.subarray(2).toString("utf16le");
+  }
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    const swapped = Buffer.from(buf.subarray(2));
+    swapped.swap16();
+    return swapped.toString("utf16le");
+  }
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+    return buf.subarray(3).toString("utf8");
+  }
+  return buf.toString("utf8");
+}
+
 async function assertToolsRunning(vmx: string): Promise<void> {
   const state = await vmrun.checkToolsState(vmx);
   if (state === "running" || state === "installed") return;
@@ -141,7 +164,9 @@ export function registerGuestTools(server: McpServer): void {
         shell: z
           .enum(["auto", "bash", "cmd", "powershell"])
           .default("auto")
-          .describe('"auto" picks cmd/powershell for Windows guests and bash otherwise'),
+          .describe(
+            '"auto" picks PowerShell for Windows guests and bash otherwise. Avoid "cmd": cmd.exe launched through VMware Tools hangs indefinitely on Windows guests, so it is only there for the rare case you need it.',
+          ),
         timeoutSec: z.number().int().min(5).max(7200).default(600),
         maxBytes: z.number().int().min(1024).max(4_000_000).default(200_000),
         ...credArgs,
@@ -166,20 +191,40 @@ export function registerGuestTools(server: McpServer): void {
 
       let interpreter: string;
       let script: string;
-      if (isWindows && a.shell === "powershell") {
-        interpreter = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-        script = `& { ${a.command} } *> "${guestOut}"`;
-      } else if (isWindows) {
+      if (isWindows && a.shell === "cmd") {
+        // Explicitly requested, but see the note on the `shell` parameter:
+        // cmd.exe launched through VIX hangs on Windows guests.
         interpreter = "C:\\Windows\\System32\\cmd.exe";
         script = `${a.command} > "${guestOut}" 2>&1`;
+      } else if (isWindows) {
+        // PowerShell, not cmd. cmd.exe run through VIX hangs indefinitely on
+        // Windows guests — verified against a healthy Windows 10 VM with Tools
+        // 12.4.5: powershell.exe and whoami.exe return instantly, every cmd.exe
+        // form times out, with or without -interactive.
+        interpreter = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        script = `& { ${a.command} } *> "${guestOut}"`;
       } else {
         interpreter = "/bin/bash";
         script = `{ ${a.command} ; } > '${guestOut}' 2>&1`;
       }
 
-      const r = await vmrun.runScriptInGuest(cred, vmx, interpreter, script, {
-        timeoutMs: a.timeoutSec * 1000,
-      });
+      // On Windows, invoke PowerShell as a *program* with -Command rather than
+      // via runScriptInGuest. runScriptInGuest drops the script into a .ps1 and
+      // executes it, which the default Restricted execution policy silently
+      // refuses — vmrun still reports success and no output file appears.
+      // Passing -ExecutionPolicy Bypass -Command sidesteps both problems.
+      const r =
+        isWindows && a.shell !== "cmd"
+          ? await vmrun.runProgramInGuest(
+              cred,
+              vmx,
+              interpreter,
+              ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+              { timeoutMs: a.timeoutSec * 1000 },
+            )
+          : await vmrun.runScriptInGuest(cred, vmx, interpreter, script, {
+              timeoutMs: a.timeoutSec * 1000,
+            });
 
       const hostTmp = path.join(cfg.workDir, `${stamp}.txt`);
       let output = "";
@@ -188,7 +233,7 @@ export function registerGuestTools(server: McpServer): void {
         await vmrun.copyFileFromGuest(cred, vmx, guestOut, hostTmp);
         const buf = fs.readFileSync(hostTmp);
         truncated = buf.length > a.maxBytes;
-        output = buf.subarray(0, a.maxBytes).toString("utf8");
+        output = decodeGuestText(buf.subarray(0, a.maxBytes));
       } catch (e) {
         output = `(could not retrieve output file: ${(e as Error).message})`;
       } finally {
@@ -276,7 +321,7 @@ export function registerGuestTools(server: McpServer): void {
           guestPath: a.guestPath,
           sizeBytes: buf.length,
           truncated,
-          content: buf.subarray(0, a.maxBytes).toString("utf8"),
+          content: decodeGuestText(buf.subarray(0, a.maxBytes)),
         });
       } finally {
         fs.rmSync(tmp, { force: true });

@@ -19,7 +19,7 @@ const SPECS = {
     installIso: "windoes1o.iso",
     guestOsId: "windows9-64",
     username: "labadmin",
-    memoryMb: 4096, cpus: 2, diskGb: 60, firmware: "bios",
+    memoryMb: 3072, cpus: 2, diskGb: 60, firmware: "bios",
     // Multi-edition install.esd with no ei.cfg; the answer file injects the
     // generic edition-selection key for this name (#5).
     windowsImageName: "Windows 10 Pro",
@@ -31,7 +31,7 @@ const SPECS = {
     installIso: "winsrv2019-eval.iso",
     guestOsId: "windows9srv-64",
     username: "labadmin",
-    memoryMb: 4096, cpus: 2, diskGb: 60, firmware: "bios",
+    memoryMb: 3072, cpus: 2, diskGb: 60, firmware: "bios",
     // Eval media carries four images; 2 is Standard with Desktop Experience.
     // Evaluation ISOs reject KMS client keys, so no product key is injected.
     windowsImageIndex: 2,
