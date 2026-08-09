@@ -86,6 +86,35 @@ A failed install cannot be retried; the VM has to be deleted and rebuilt.
 `finalize_provision` recovers a VM whose install finished on its own, but there
 is no path back from a failure partway through.
 
+### P1 — Constrain host filesystem access ([#20](../../issues/20))
+
+The allowlist protects *VMs*, not the host. `guest_copy_from` resolves `hostPath`
+with no check and can overwrite any file on the machine; `guest_copy_to` can read
+any file into a guest; `capture_screen` writes its PNG anywhere.
+
+The asymmetry is the problem: `delete_vm` is carefully fenced inside `VM_ROOT`
+while a copy can write to `C:\Windows\System32`. With an AI agent driving,
+that is backwards.
+
+### P2 — Security and correctness from the audit
+
+- [#21](../../issues/21) `credentials.json` is written with `mode: 0o600`, which
+  Windows ignores — the file is `-rw-r--r--` and the README's claim it is ACL'd
+  is not true as written.
+- [#22](../../issues/22) `allocateVncPort` has a TOCTOU race; two concurrent
+  `create_vm` calls can pick the same port, after which `send_keys` would drive
+  the wrong VM.
+- [#23](../../issues/23) Registry mutations are read-modify-write with no lock,
+  so concurrent `fleet_*` operations can drop updates.
+- [#24](../../issues/24) A VM adopted by `register_vm` without a usable
+  `guestOsId` is assumed to be Linux and handed `/bin/bash`.
+- [#25](../../issues/25) The work directory accumulates screenshots forever.
+
+**Rule learned the hard way ([#19](../../issues/19)): a `.vmx` edit made while a
+VM is running does not persist** — VMware rewrites the file at power-off.
+`configure_vm` and `set_network` already refuse on a running VM; anything else
+touching the `.vmx` must do the same.
+
 ### P2 — Expose what already exists ([#10](../../issues/10))
 
 Helpers implemented in `src/vmrun.ts` with no tool wrapping them:
