@@ -59,92 +59,48 @@ majority of it in a single pass.
 
 ## Backlog
 
-### P0 — Clone VMs instead of reinstalling them ([#7](../../issues/7))
+Everything below P0 was closed in the audit-fix pass; see
+[`scripts/verify-fixes.mjs`](scripts/verify-fixes.mjs), which re-checks each one
+against a live host rather than trusting the commit message.
 
-The original goal was running *multiple* VMs. Today each one costs a 30–40 minute
-install, so a ten-VM lab is a lost afternoon and 400 GB.
+### Done
 
-`vmrun clone` is already wrapped in `src/vmrun.ts` — it is simply not exposed as
-a tool. With a template plus linked clones, VM #2 onward take about 30 seconds
-and a few hundred MB each.
+| Issue | Fix | Verified by |
+|---|---|---|
+| [#7](../../issues/7) | `clone_vm`, `fleet_clone`, `mark_template`, `delete_clone_tree` | linked clone in 4 s / 4 MB; 3 clones in 7.5 s; clone boots and answers `guest_exec_capture` |
+| [#10](../../issues/10) | `pause_vm`, `unpause_vm`, `guest_rename`, `set_shared_folder_state`, `disable_shared_folders` | all present in the tool list |
+| [#11](../../issues/11) | `node:test` suite | 35 tests passing |
+| [#12](../../issues/12) | `guest_copy_dir_to` / `guest_copy_dir_from` | nested tree round-trips host→guest→host, 3 copied 0 failed |
+| [#18](../../issues/18) | seed ISOs deleted after provisioning | seed directory empty |
+| [#19](../../issues/19) | media detached with the VM powered off | no `sata0:1-3` entries on any VM |
+| [#20](../../issues/20) | `assertHostPathAllowed` on every host read and write | write to `C:\Windows\Temp` refused |
+| [#21](../../issues/21) | `icacls` ACL on `credentials.json` | ACL reads `<user>:(F)` only |
+| [#22](../../issues/22) | in-process port reservation + live-listener check | four VMs, four distinct ports |
+| [#23](../../issues/23) | directory lock + pid-unique temp file | registry valid, no `.tmp` leftovers |
+| [#24](../../issues/24) | probe the guest when `osFamily` is unknown | forced `osFamily: "other"` still selected bash |
+| [#25](../../issues/25) | prune scratch files older than the retention window | 30-day-old file removed, fresh one kept |
 
-- `clone_vm` (full and linked), requiring a snapshot for linked mode
-- `mark_template` / template flag in the registry
-- `fleet_clone` — build N VMs from one template in a single call
+### Still open
 
-This changes what the server is for: from "install VMs" to "spin up a lab".
+**[#1](../../issues/1) and [#2](../../issues/2)** are VMware defects, worked
+around but unresolved upstream. Not fixable here.
 
-### P1 — Verify the guest layer ([#8](../../issues/8))
+**[#9](../../issues/9) Provision resume** — a failed install still cannot be
+retried; the VM has to be deleted and rebuilt. `finalize_provision` covers the
+adjacent case where an install *completed* while the orchestrator was down.
 
-Finish one Linux install, then exercise `guest_run`, `guest_exec_capture`, file
-round-trip, `get_guest_ip`, snapshots, and `fleet_run`. Move ~35 tools from
-unproven to verified.
+**[#13](../../issues/13) Hardware and format coverage** — multiple NICs, USB
+passthrough, OVF import/export, hot-add CPU/RAM, encrypted VMs, ISO library
+subdirectories.
 
-### P1 — Provision resume ([#9](../../issues/9))
-
-A failed install cannot be retried; the VM has to be deleted and rebuilt.
-`finalize_provision` recovers a VM whose install finished on its own, but there
-is no path back from a failure partway through.
-
-### P1 — Constrain host filesystem access ([#20](../../issues/20))
-
-The allowlist protects *VMs*, not the host. `guest_copy_from` resolves `hostPath`
-with no check and can overwrite any file on the machine; `guest_copy_to` can read
-any file into a guest; `capture_screen` writes its PNG anywhere.
-
-The asymmetry is the problem: `delete_vm` is carefully fenced inside `VM_ROOT`
-while a copy can write to `C:\Windows\System32`. With an AI agent driving,
-that is backwards.
-
-### P2 — Security and correctness from the audit
-
-- [#21](../../issues/21) `credentials.json` is written with `mode: 0o600`, which
-  Windows ignores — the file is `-rw-r--r--` and the README's claim it is ACL'd
-  is not true as written.
-- [#22](../../issues/22) `allocateVncPort` has a TOCTOU race; two concurrent
-  `create_vm` calls can pick the same port, after which `send_keys` would drive
-  the wrong VM.
-- [#23](../../issues/23) Registry mutations are read-modify-write with no lock,
-  so concurrent `fleet_*` operations can drop updates.
-- [#24](../../issues/24) A VM adopted by `register_vm` without a usable
-  `guestOsId` is assumed to be Linux and handed `/bin/bash`.
-- [#25](../../issues/25) The work directory accumulates screenshots forever.
+**[#8](../../issues/8) Remaining verification** — Windows 7 is untested and
+best-effort; the Server 2019 `<AdministratorPassword>` fix has not been proven on
+a fresh install, because that OOBE prompt was cleared by hand to avoid a rebuild.
 
 **Rule learned the hard way ([#19](../../issues/19)): a `.vmx` edit made while a
 VM is running does not persist** — VMware rewrites the file at power-off.
 `configure_vm` and `set_network` already refuse on a running VM; anything else
 touching the `.vmx` must do the same.
-
-### P2 — Expose what already exists ([#10](../../issues/10))
-
-Helpers implemented in `src/vmrun.ts` with no tool wrapping them:
-`pause` `unpause` `renameFileInGuest` `setSharedFolderState`
-`disableSharedFolders`.
-
-### P2 — Tests ([#11](../../issues/11))
-
-No unit tests beyond the `sha512crypt` self-check. The pure logic is cheap to
-cover and is where silent breakage would hurt most:
-
-- `keymap.ts` — boot-command parsing, modifier handling
-- `vmx.ts` — parse/patch round-trip
-- `paths.ts` — allowlist, `..` traversal, symlink escape
-- answer-file generators — snapshot tests on the emitted XML/YAML/preseed
-
-Then CI on push.
-
-### P2 — Recursive directory copy ([#12](../../issues/12))
-
-`guest_copy_to` / `guest_copy_from` handle single files only, because that is all
-`vmrun` offers. Walking a tree and copying file-by-file is the fix.
-
-### P3 — Hardware and format coverage ([#13](../../issues/13))
-
-Multiple NICs (`create_vm` only wires `ethernet0`), USB passthrough, OVF/OVA
-import and export, hot-add CPU/RAM, encrypted VMs (`-vp` is redacted in `exec.ts`
-but no tool accepts it), ISO library subdirectory scanning.
-
----
 
 ## Guest OS support
 

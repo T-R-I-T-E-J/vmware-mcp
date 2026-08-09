@@ -4,7 +4,7 @@ Every tool the server exposes, generated from its own registered schemas by
 [`scripts/gen-tool-docs.mjs`](../scripts/gen-tool-docs.mjs) — so this file cannot
 drift from the code.
 
-**57 tools.** ⚠️ marks tools that refuse to run without `confirm: true`.
+**68 tools.** ⚠️ marks tools that refuse to run without `confirm: true`.
 
 
 ## Discovery & lifecycle
@@ -103,7 +103,7 @@ Add an already-existing VM to the registry so it can carry tags, a credential re
 
 ## Power
 
-[`start_vm`](#startvm) · [`stop_vm`](#stopvm) · [`reset_vm`](#resetvm) · [`suspend_vm`](#suspendvm) · [`wait_for_tools`](#waitfortools) · [`install_tools`](#installtools)
+[`start_vm`](#startvm) · [`stop_vm`](#stopvm) · [`reset_vm`](#resetvm) · [`suspend_vm`](#suspendvm) · [`pause_vm`](#pausevm) · [`unpause_vm`](#unpausevm) · [`wait_for_tools`](#waitfortools) · [`install_tools`](#installtools)
 
 ### start_vm
 
@@ -150,6 +150,26 @@ Suspend a running VM to disk, preserving its exact state. start_vm resumes it.
 |---|---|---|---|
 | `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
 | `mode` | `soft` \| `hard` | default `"soft"` |  |
+
+### pause_vm
+
+_pause_vm_
+
+Freeze a running VM's execution without saving state to disk. Much faster than suspend, but the VM must be unpaused before the host reboots or the state is lost.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+
+### unpause_vm
+
+_unpause_vm_
+
+Resume a VM previously frozen with pause_vm.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
 
 ### wait_for_tools
 
@@ -267,7 +287,7 @@ Show the keystrokes provision_vm types at the bootloader for a given installer, 
 
 ## Guest control
 
-[`set_credential`](#setcredential) · [`guest_run`](#guestrun) · [`guest_run_script`](#guestrunscript) · [`guest_exec_capture`](#guestexeccapture) · [`guest_copy_to`](#guestcopyto) · [`guest_copy_from`](#guestcopyfrom) · [`guest_read_file`](#guestreadfile) · [`guest_write_file`](#guestwritefile) · [`guest_list_dir`](#guestlistdir) · [`guest_path_exists`](#guestpathexists) · [`guest_mkdir`](#guestmkdir) · [`guest_delete`](#guestdelete) · [`guest_list_processes`](#guestlistprocesses) · [`guest_kill_process`](#guestkillprocess)
+[`set_credential`](#setcredential) · [`guest_run`](#guestrun) · [`guest_run_script`](#guestrunscript) · [`guest_exec_capture`](#guestexeccapture) · [`guest_copy_to`](#guestcopyto) · [`guest_copy_from`](#guestcopyfrom) · [`guest_read_file`](#guestreadfile) · [`guest_write_file`](#guestwritefile) · [`guest_list_dir`](#guestlistdir) · [`guest_path_exists`](#guestpathexists) · [`guest_mkdir`](#guestmkdir) · [`guest_delete`](#guestdelete) · [`guest_list_processes`](#guestlistprocesses) · [`guest_kill_process`](#guestkillprocess) · [`guest_rename`](#guestrename) · [`guest_copy_dir_to`](#guestcopydirto) · [`guest_copy_dir_from`](#guestcopydirfrom)
 
 ### set_credential
 
@@ -325,7 +345,7 @@ The practical way to get output back from a guest. Runs a shell command, redirec
 |---|---|---|---|
 | `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
 | `command` | string | **required** | Shell command line to run inside the guest |
-| `shell` | `auto` \| `bash` \| `cmd` \| `powershell` | default `"auto"` | "auto" picks cmd/powershell for Windows guests and bash otherwise |
+| `shell` | `auto` \| `bash` \| `cmd` \| `powershell` | default `"auto"` | "auto" picks PowerShell for Windows guests and bash otherwise. Avoid "cmd": cmd.exe launched through VMware Tools hangs indefinitely on Windows guests, so it is only there for the rare case you need it. |
 | `timeoutSec` | integer | default `600` |  |
 | `maxBytes` | integer | default `200000` |  |
 | `credentialRef` | string | optional | Name of a stored credential in credentials.json |
@@ -477,6 +497,53 @@ Terminate a process inside the guest by pid.
 | `guestUser` | string | optional | Guest username (overrides credentialRef) |
 | `guestPassword` | string | optional | Guest password (overrides credentialRef) |
 
+### guest_rename
+
+_guest_rename_
+
+Rename a file inside the guest, or move it by giving a different directory in the new path.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+| `from` | string | **required** | Existing absolute path inside the guest |
+| `to` | string | **required** | New absolute path inside the guest |
+| `credentialRef` | string | optional | Name of a stored credential in credentials.json |
+| `guestUser` | string | optional | Guest username (overrides credentialRef) |
+| `guestPassword` | string | optional | Guest password (overrides credentialRef) |
+
+### guest_copy_dir_to
+
+_guest_copy_dir_to_
+
+Copy a whole directory tree from the host into the guest. VMware Tools only moves one file at a time, so this walks the tree and copies file by file, creating directories as it goes. Host paths are restricted the same way as guest_copy_to.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+| `hostDir` | string | **required** | Absolute host directory to copy from |
+| `guestDir` | string | **required** | Absolute destination directory inside the guest |
+| `maxFiles` | integer | default `500` | Safety cap — a mistaken path should not fire thousands of copies |
+| `credentialRef` | string | optional | Name of a stored credential in credentials.json |
+| `guestUser` | string | optional | Guest username (overrides credentialRef) |
+| `guestPassword` | string | optional | Guest password (overrides credentialRef) |
+
+### guest_copy_dir_from
+
+_guest_copy_dir_from_
+
+Copy a directory tree from the guest to the host. Lists the guest directory recursively, then copies file by file. Host destinations are restricted the same way as guest_copy_from.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+| `guestDir` | string | **required** | Absolute directory inside the guest |
+| `hostDir` | string | **required** | Absolute destination directory on the host |
+| `maxFiles` | integer | default `500` |  |
+| `credentialRef` | string | optional | Name of a stored credential in credentials.json |
+| `guestUser` | string | optional | Guest username (overrides credentialRef) |
+| `guestPassword` | string | optional | Guest password (overrides credentialRef) |
+
 ## Screen & input
 
 [`capture_screen`](#capturescreen) · [`send_keys`](#sendkeys) · [`send_key_sequence`](#sendkeysequence) · [`enable_console_input`](#enableconsoleinput) · [`type_in_guest`](#typeinguest) · [`set_guest_resolution`](#setguestresolution)
@@ -555,7 +622,7 @@ Change the guest's display resolution. Requires VMware Tools running in the gues
 
 ## Networking & sharing
 
-[`get_guest_ip`](#getguestip) · [`set_network`](#setnetwork) · [`list_host_networks`](#listhostnetworks) · [`get_host_gateway_ip`](#gethostgatewayip) · [`add_shared_folder`](#addsharedfolder) · [`remove_shared_folder`](#removesharedfolder) · [`list_shared_folders`](#listsharedfolders) · [`set_port_forward`](#setportforward) · [`list_port_forwards`](#listportforwards)
+[`get_guest_ip`](#getguestip) · [`set_network`](#setnetwork) · [`list_host_networks`](#listhostnetworks) · [`get_host_gateway_ip`](#gethostgatewayip) · [`add_shared_folder`](#addsharedfolder) · [`remove_shared_folder`](#removesharedfolder) · [`list_shared_folders`](#listsharedfolders) · [`set_shared_folder_state`](#setsharedfolderstate) · [`disable_shared_folders`](#disablesharedfolders) · [`set_port_forward`](#setportforward) · [`list_port_forwards`](#listportforwards)
 
 ### get_guest_ip
 
@@ -628,6 +695,29 @@ Stop sharing a host folder with the guest.
 _list_shared_folders · read-only_
 
 List the host folders shared with this VM, as recorded in its .vmx.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+
+### set_shared_folder_state
+
+_set_shared_folder_state_
+
+Change an existing shared folder between writable and read-only without removing and re-adding it. Read-only is the safer default when the guest is untrusted.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+| `shareName` | string | **required** |  |
+| `hostPath` | string | **required** | The host directory this share points at |
+| `writable` | boolean | **required** |  |
+
+### disable_shared_folders
+
+_disable_shared_folders_
+
+Disable host-guest folder sharing for this VM without deleting the share definitions. The counterpart to add_shared_folder, which enables sharing implicitly.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -707,6 +797,64 @@ Delete a snapshot, merging its data into the parent. The VM's current state is u
 | `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
 | `name` | string | **required** |  |
 | `andDeleteChildren` | boolean | default `false` |  |
+| `confirm` | boolean | default `false` | Must be true. This operation is destructive and is refused without it. |
+
+## Cloning & templates
+
+[`clone_vm`](#clonevm) · [`fleet_clone`](#fleetclone) · [`mark_template`](#marktemplate) · [`delete_clone_tree`](#deleteclonetree)
+
+### clone_vm
+
+_clone_vm_
+
+Copy an existing VM into a new one. A linked clone shares the parent's disk and takes seconds and a few hundred MB; a full clone is independent but copies every gigabyte. The clone gets its own name, MAC address and console port, so it can run alongside its parent. The source must be powered off.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+| `newName` | string | **required** | Name for the clone; becomes its folder under VM_ROOT |
+| `linked` | boolean | default `true` | Linked (fast, shares the parent's disk, parent must stay put) or full (independent) |
+| `snapshot` | string | optional | Snapshot to branch from. Defaults to 'clean', created if the VM has no snapshot. |
+| `tags` | array | default `[]` |  |
+| `credentialRef` | string | optional | Defaults to the source VM's credential |
+
+### fleet_clone
+
+_fleet_clone_
+
+Build N copies of a VM in one call — the fast way to stand up a lab. Names are the prefix plus a number (lab-1, lab-2, …). Linked clones make this take seconds per VM rather than a full OS install each. The source must be powered off.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+| `count` | integer | **required** |  |
+| `namePrefix` | string | **required** | e.g. "lab" produces lab-1, lab-2, … |
+| `startIndex` | integer | default `1` |  |
+| `linked` | boolean | default `true` |  |
+| `snapshot` | string | optional |  |
+| `tags` | array | default `[]` |  |
+| `maxConcurrency` | integer | default `2` |  |
+
+### mark_template
+
+_mark_template_
+
+Flag a VM as a template to clone from. Templates are excluded from fleet_start so a golden image is not powered on by accident, and clone_vm reports which template a VM came from.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `vm` | string | **required** | VM name (folder under VM_ROOT) or an absolute path to its .vmx file |
+| `isTemplate` | boolean | default `true` |  |
+
+### delete_clone_tree ⚠️
+
+_delete_clone_tree_
+
+Delete every linked clone made from a template, leaving the template itself. Use before deleting or moving a template, since linked clones break when their parent goes away. Requires confirm: true.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `namePrefix` | string | **required** | Delete VMs whose name starts with this |
 | `confirm` | boolean | default `false` | Must be true. This operation is destructive and is refused without it. |
 
 ## Fleet

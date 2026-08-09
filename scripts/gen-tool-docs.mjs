@@ -16,12 +16,13 @@ const { tools } = await client.listTools();
 
 const GROUPS = [
   ["Discovery & lifecycle", ["list_isos","list_vms","get_vm_info","create_vm","configure_vm","delete_vm","register_vm"]],
-  ["Power", ["start_vm","stop_vm","reset_vm","suspend_vm","wait_for_tools","install_tools"]],
+  ["Power", ["start_vm","stop_vm","reset_vm","suspend_vm","pause_vm","unpause_vm","wait_for_tools","install_tools"]],
   ["Unattended provisioning", ["provision_vm","get_provision_status","finalize_provision","preview_answer_file","get_boot_command"]],
-  ["Guest control", ["set_credential","guest_run","guest_run_script","guest_exec_capture","guest_copy_to","guest_copy_from","guest_read_file","guest_write_file","guest_list_dir","guest_path_exists","guest_mkdir","guest_delete","guest_list_processes","guest_kill_process"]],
+  ["Guest control", ["set_credential","guest_run","guest_run_script","guest_exec_capture","guest_copy_to","guest_copy_from","guest_read_file","guest_write_file","guest_list_dir","guest_path_exists","guest_mkdir","guest_delete","guest_list_processes","guest_kill_process","guest_rename","guest_copy_dir_to","guest_copy_dir_from"]],
   ["Screen & input", ["capture_screen","send_keys","send_key_sequence","enable_console_input","type_in_guest","set_guest_resolution"]],
-  ["Networking & sharing", ["get_guest_ip","set_network","list_host_networks","get_host_gateway_ip","add_shared_folder","remove_shared_folder","list_shared_folders","set_port_forward","list_port_forwards"]],
+  ["Networking & sharing", ["get_guest_ip","set_network","list_host_networks","get_host_gateway_ip","add_shared_folder","remove_shared_folder","list_shared_folders","set_shared_folder_state","disable_shared_folders","set_port_forward","list_port_forwards"]],
   ["Snapshots", ["snapshot_create","snapshot_list","snapshot_revert","snapshot_delete"]],
+  ["Cloning & templates", ["clone_vm","fleet_clone","mark_template","delete_clone_tree"]],
   ["Fleet", ["fleet_status","fleet_start","fleet_stop","fleet_run","fleet_snapshot","fleet_revert"]],
 ];
 

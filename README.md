@@ -11,7 +11,7 @@ Windows 10, Ubuntu 24.04, Debian 12, and Kali media.
 ```mermaid
 flowchart LR
     U["You"] -->|"build me a Windows 10 lab VM"| C["Claude Code"]
-    C -->|"MCP over stdio"| S["<b>vmware-mcp</b><br/>57 tools"]
+    C -->|"MCP over stdio"| S["<b>vmware-mcp</b><br/>68 tools"]
     S -->|"vmrun · vmcli · VNC"| W["VMware Workstation 17"]
     W --> V1["win10-lab"]
     W --> V2["ubuntu-lab"]
@@ -41,10 +41,11 @@ possible.
 > silently does nothing — see **[docs/field-notes.md](docs/field-notes.md)** for
 > the seven failure modes and how each was diagnosed.
 
-**Project status:** Kali 2024.4 has been provisioned end to end — blank disk to a
-logged-in machine running commands — which verified the guest-control layer.
-Windows and Ubuntu are not yet proven to completion. Status per tool is tracked
-honestly in **[ROADMAP.md](ROADMAP.md)**.
+**Project status:** four guests provisioned end to end — Kali, Ubuntu 24.04,
+Windows 10 Pro and Windows Server 2019 — each from a blank disk to a logged-in
+machine running commands. 68 tools, 35 unit tests, and
+[`scripts/verify-fixes.mjs`](scripts/verify-fixes.mjs) re-checks every closed
+issue against a live host. Status per tool: **[ROADMAP.md](ROADMAP.md)**.
 
 ## What it can do
 
@@ -57,6 +58,7 @@ honestly in **[ROADMAP.md](ROADMAP.md)**.
 | Screen & input | `capture_screen` `send_keys` `send_key_sequence` `type_in_guest` `enable_console_input` `set_guest_resolution` |
 | Network | `get_guest_ip` `set_network` `list_host_networks` `get_host_gateway_ip` `set_port_forward` `list_port_forwards` `add_shared_folder` `remove_shared_folder` `list_shared_folders` |
 | Snapshots | `snapshot_create` `snapshot_list` `snapshot_revert` `snapshot_delete` |
+| **Cloning** | `clone_vm` `fleet_clone` `mark_template` `delete_clone_tree` |
 | Fleet | `fleet_status` `fleet_start` `fleet_stop` `fleet_run` `fleet_snapshot` `fleet_revert` |
 
 ## Setup
@@ -122,6 +124,21 @@ commands — after which every `guest_*` tool works.
 `provision_vm` runs in the background by default because an OS install outlasts
 any MCP client's request timeout. Pass `wait: true` only from a script that can
 hold the connection open.
+
+### Cloning: the fast way to a lab
+
+Installing is for the *first* VM. After that, clone:
+
+```jsonc
+// One golden image, nine copies, seconds each
+{ "vm": "kali-lab", "count": 9, "namePrefix": "lab", "linked": true }
+```
+
+Measured here: a linked clone takes **4 seconds and 4 MB**, against ~30 minutes
+and 8 GB to install. Clones get their own name, MAC and console port, so they run
+alongside the parent. Mark the source with `mark_template` and `fleet_start`
+will refuse to boot it, since booting a golden image dirties the disk every
+linked clone depends on.
 
 ### Supported install paths
 
