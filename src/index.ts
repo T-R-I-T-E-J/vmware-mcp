@@ -12,6 +12,7 @@ import { registerScreenTools } from "./tools/screen.js";
 import { registerNetworkTools } from "./tools/network.js";
 import { registerProvisionTools } from "./tools/provision.js";
 import { registerFleetTools } from "./tools/fleet.js";
+import { registerCloneTools } from "./tools/clone.js";
 
 async function main(): Promise<void> {
   // Fail fast and loudly if VMware isn't where we think it is — a broken config
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
   registerNetworkTools(server);
   registerProvisionTools(server);
   registerFleetTools(server);
+  registerCloneTools(server);
 
   await server.connect(new StdioServerTransport());
 

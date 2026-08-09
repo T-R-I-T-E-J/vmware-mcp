@@ -122,6 +122,39 @@ export function diskEntries(spec: DiskSpec): Record<string, string> {
   return entries;
 }
 
+/**
+ * Remove stale `.lck` directories left beside a VM's files.
+ *
+ * VMware locks a VM while it runs and clears the lock on shutdown — but a
+ * process killed mid-flight leaves the lock behind, after which VMware insists
+ * the VM "is already running" and refuses to clone or start it. That happened
+ * repeatedly here whenever a provisioning harness was killed.
+ *
+ * **The caller must first confirm the VM is not running.** Deleting a live lock
+ * would let a second vmware-vmx open the same disk and corrupt it, so this
+ * function deliberately does not decide that for itself.
+ */
+export function clearStaleLocks(vmDir: string): string[] {
+  const cleared: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(vmDir, { withFileTypes: true });
+  } catch {
+    return cleared;
+  }
+  for (const e of entries) {
+    if (!e.name.toLowerCase().endsWith(".lck")) continue;
+    const full = path.join(vmDir, e.name);
+    try {
+      fs.rmSync(full, { recursive: true, force: true });
+      cleared.push(e.name);
+    } catch {
+      /* still held by something; leave it and let VMware report the conflict */
+    }
+  }
+  return cleared;
+}
+
 /** Locate the .vmx inside a VM directory or a .vmwarevm bundle. */
 export function findVmxInDir(dir: string): string | null {
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;

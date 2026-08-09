@@ -80,7 +80,12 @@ export function registerFleetTools(server: McpServer): void {
       const recs = resolveSelection(a.selector);
       const already = new Set((await vmrun.listRunning()).map((p) => p.toLowerCase()));
 
-      const toStart = recs.filter((r) => !already.has(r.vmxPath.toLowerCase()));
+      // A golden image should never be powered on by a broad selector — booting
+      // it dirties the disk every linked clone depends on.
+      const templates = recs.filter((r) => r.tags.includes("template"));
+      const toStart = recs
+        .filter((r) => !r.tags.includes("template"))
+        .filter((r) => !already.has(r.vmxPath.toLowerCase()));
       if (already.size + toStart.length > cfg.maxRunningVms) {
         throw new Error(
           `Starting ${toStart.length} VMs would exceed the ${cfg.maxRunningVms}-VM limit (${already.size} already running). Narrow the selector or raise VMWARE_MCP_MAX_RUNNING_VMS.`,
@@ -104,7 +109,11 @@ export function registerFleetTools(server: McpServer): void {
         a.maxConcurrency ?? cfg.defaultConcurrency,
       );
 
-      return json({ skippedAlreadyRunning: recs.length - toStart.length, ...summary });
+      return json({
+        skippedTemplates: templates.map((t) => t.name),
+        skippedAlreadyRunning: recs.filter((r) => already.has(r.vmxPath.toLowerCase())).length,
+        ...summary,
+      });
     },
   );
 

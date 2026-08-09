@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { loadConfig } from "../config.js";
 import { resolveVmxByNameOrPath } from "../paths.js";
+import { clearStaleLocks } from "../vmx.js";
+import path from "node:path";
 import * as vmrun from "../vmrun.js";
 import { defineTool, json, text, vmArg } from "./common.js";
 
@@ -50,6 +52,9 @@ export function registerPowerTools(server: McpServer): void {
         );
       }
 
+      // Clear any lock left by a previous run that was killed; safe because the
+      // VM is confirmed absent from vmrun's running list above.
+      const cleared = clearStaleLocks(path.dirname(vmx));
       await vmrun.start(vmx, a.mode);
 
       if (!a.waitForTools) return text(`Started ${vmx} (${a.mode}).`);
