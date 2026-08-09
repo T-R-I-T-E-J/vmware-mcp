@@ -164,7 +164,11 @@ export async function listDirectoryInGuest(
   return stdout
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l && !/^Directory list$/i.test(l));
+    // vmrun prefixes the listing with "Directory list: <count>". The old filter
+    // only matched a bare "Directory list", so the header leaked through as a
+    // filename — guest_list_dir reported it as an entry, and the recursive copy
+    // then tried to fetch a file by that name.
+    .filter((l) => l && !/^Directory list:?\s*\d*$/i.test(l));
 }
 
 export async function fileExistsInGuest(cred: GuestCredential, vmx: string, guestPath: string) {
