@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { loadConfig, resolveCredential } from "../config.js";
-import { resolveVmxByNameOrPath } from "../paths.js";
+import { assertHostPathAllowed, resolveVmxByNameOrPath } from "../paths.js";
 import * as vmcli from "../vmcli.js";
 import * as vmrun from "../vmrun.js";
 import { parseBootCommand } from "../keymap.js";
@@ -99,7 +99,7 @@ export function registerScreenTools(server: McpServer): void {
       const shot = await grabScreenshot(vmx);
       let finalPath = shot;
       if (a.savePath) {
-        finalPath = path.resolve(a.savePath);
+        finalPath = assertHostPathAllowed(a.savePath, "write");
         fs.mkdirSync(path.dirname(finalPath), { recursive: true });
         fs.copyFileSync(shot, finalPath);
       }

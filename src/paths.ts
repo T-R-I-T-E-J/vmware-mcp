@@ -86,6 +86,44 @@ export function assertIsoAllowed(target: string): string {
 }
 
 /**
+ * Gate for paths on the **host** filesystem.
+ *
+ * The VM allowlist above protects virtual machines; this protects the machine
+ * they run on. Without it, `guest_copy_from` could overwrite any file on the
+ * host and `guest_copy_to` could lift `~/.ssh/id_rsa` into a guest — while
+ * `delete_vm` was carefully fenced inside VM_ROOT. That asymmetry is the wrong
+ * way round when the caller is an agent acting on natural-language instructions.
+ *
+ * Allowed by default: the server's work directory, VM_ROOT, and the read-only
+ * ISO library. `HOST_SHARED_DIR` opts in an extra directory for exchanging files
+ * with guests. `VMWARE_MCP_ALLOW_ANY_HOST_PATH=1` disables the gate entirely for
+ * anyone who genuinely wants the old behaviour.
+ */
+export function assertHostPathAllowed(target: string, purpose: "read" | "write"): string {
+  const cfg = loadConfig();
+  if (!target || !target.trim()) throw new PathNotAllowedError(String(target), "empty path");
+
+  const resolved = realpathTolerant(target);
+  if (process.env.VMWARE_MCP_ALLOW_ANY_HOST_PATH === "1") return resolved;
+
+  const roots = [cfg.workDir, cfg.vmRoot, ...(process.env.HOST_SHARED_DIR ? [process.env.HOST_SHARED_DIR] : [])];
+  // Reading install media is legitimate; writing to the library is not.
+  if (purpose === "read") roots.push(cfg.isoLibrary);
+
+  for (const root of roots) {
+    const r = realpathTolerant(root);
+    if (resolved === r || isInside(r, resolved)) return resolved;
+  }
+
+  throw new PathNotAllowedError(
+    resolved,
+    `host paths for ${purpose} are limited to the work directory (${cfg.workDir}), VM_ROOT` +
+      `${purpose === "read" ? `, the ISO library` : ""}, and HOST_SHARED_DIR if set. ` +
+      `Set HOST_SHARED_DIR to exchange files elsewhere, or VMWARE_MCP_ALLOW_ANY_HOST_PATH=1 to disable this check.`,
+  );
+}
+
+/**
  * Verify VM_ROOT is somewhere VMware can actually build a VM, and warn about
  * storage that will fail slowly rather than fast.
  *

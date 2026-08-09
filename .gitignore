@@ -9,3 +9,4 @@ work/
 *.iso
 *.png
 credentials.json
+dist-test/

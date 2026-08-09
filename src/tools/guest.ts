@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { loadConfig, resolveCredential, saveCredential, type GuestCredential } from "../config.js";
-import { assertVmPathAllowed, resolveVmxByNameOrPath } from "../paths.js";
+import { assertHostPathAllowed, resolveVmxByNameOrPath } from "../paths.js";
 import * as vmrun from "../vmrun.js";
 import { getRecord, listRecords } from "../registry.js";
 import { credArgs, defineTool, json, text, vmArg } from "./common.js";
@@ -23,15 +23,6 @@ function credFor(vmx: string, a: { credentialRef?: string; guestUser?: string; g
   );
 }
 
-/**
- * Guard guest operations on Tools being present.
- *
- * Deliberately accepts "installed" as well as "running". open-vm-tools on Kali
- * reported `installed` while the service was active and enabled, and guest
- * operations partly worked in that state — refusing outright blocked tools that
- * would have succeeded. Let the operation itself fail with the real error rather
- * than pre-emptively rejecting on a state VMware reports inconsistently.
- */
 /**
  * Decode text captured from a guest, honouring a byte-order mark.
  *
@@ -55,6 +46,15 @@ function decodeGuestText(buf: Buffer): string {
   return buf.toString("utf8");
 }
 
+/**
+ * Guard guest operations on Tools being present.
+ *
+ * Deliberately accepts "installed" as well as "running". open-vm-tools on Kali
+ * reported `installed` while the service was active and enabled, and guest
+ * operations partly worked in that state — refusing outright blocked tools that
+ * would have succeeded. Let the operation itself fail with the real error rather
+ * than pre-emptively rejecting on a state VMware reports inconsistently.
+ */
 async function assertToolsRunning(vmx: string): Promise<void> {
   const state = await vmrun.checkToolsState(vmx);
   if (state === "running" || state === "installed") return;
@@ -261,8 +261,9 @@ export function registerGuestTools(server: McpServer): void {
     async (a) => {
       const vmx = resolveVmxByNameOrPath(a.vm);
       await assertToolsRunning(vmx);
-      if (!fs.existsSync(a.hostPath)) throw new Error(`No such host file: ${a.hostPath}`);
-      await vmrun.copyFileToGuest(credFor(vmx, a), vmx, path.resolve(a.hostPath), a.guestPath);
+      const src = assertHostPathAllowed(a.hostPath, "read");
+      if (!fs.existsSync(src)) throw new Error(`No such host file: ${src}`);
+      await vmrun.copyFileToGuest(credFor(vmx, a), vmx, src, a.guestPath);
       return text(`Copied ${a.hostPath} → ${a.guestPath}`);
     },
   );
@@ -286,7 +287,7 @@ export function registerGuestTools(server: McpServer): void {
       const vmx = resolveVmxByNameOrPath(a.vm);
       await assertToolsRunning(vmx);
       const dest = a.hostPath
-        ? path.resolve(a.hostPath)
+        ? assertHostPathAllowed(a.hostPath, "write")
         : path.join(cfg.workDir, `${Date.now()}-${path.basename(a.guestPath.replace(/\\/g, "/"))}`);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       await vmrun.copyFileFromGuest(credFor(vmx, a), vmx, a.guestPath, dest);
