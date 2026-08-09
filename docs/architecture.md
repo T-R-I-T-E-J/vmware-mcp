@@ -381,17 +381,17 @@ answer whenever something is broken.
 
 ### Honest status
 
-**Kali 2024.4 has been provisioned end to end** — blank disk to `lifecycle:
-ready`, with the account proven by running commands in it:
+**Kali 2024.4 and Ubuntu 24.04 have both been provisioned end to end** — blank
+disk to `lifecycle: ready`, with each account proven by running commands in it:
 
 ```
-kali-lab   lifecycle: ready   toolsState: running   snapshots: clean, verified
-guest_exec_capture → Linux kali 6.11.2-amd64 · uid=1000(labuser)
-get_guest_ip       → 192.168.119.138
-file write/read    → 22 bytes, exact round-trip
-fleet_run          → 1 succeeded, 0 failed
+kali-lab     ready   guest_exec_capture → Linux kali 6.11.2-amd64 · uid=1000(labuser)
+                     get_guest_ip → 192.168.119.138 · snapshots: clean, verified
+ubuntu-lab   ready   guest_exec_capture → Ubuntu 24.04.3 LTS · uid=1000(labuser)
+                     get_guest_ip → 192.168.119.139 · snapshot: clean
+both                 file write/read round-trip exact · fleet_run 2 ok, 0 failed
 ```
 
-That verified the guest layer. Windows 10, Ubuntu, and Server 2019 remain
-untested to completion. `ROADMAP.md` tracks status per tool rather than claiming
+That verified the guest layer on both Linux delivery paths — preseed over HTTP
+and cloud-init seed ISO. Windows 10 and Server 2019 remain in progress. `ROADMAP.md` tracks status per tool rather than claiming
 the whole surface works.
