@@ -34,7 +34,8 @@ disk to `ready`:
 - **Windows 10 Pro** — `autounattend.xml` on a seed CD, auto-logon, VMware Tools
   installed at first logon. 7/7 guest checks pass.
 
-Windows Server 2019 is the remaining untested guest.
+**All four requested guests are verified.** Windows 7 remains untested and
+best-effort — Tools support on Workstation 17 is legacy.
 
 ### Built, not yet verified ⛔
 
@@ -124,7 +125,7 @@ but no tool accepts it), ISO library subdirectory scanning.
 | Ubuntu 24.04 desktop | cloud-init `CIDATA` seed | **✅ Verified end to end — reached `ready`** |
 | Debian 12 | preseed over HTTP | Reaches package install; completion unverified |
 | Kali 2024.4 | preseed over HTTP (Kali mirror) | **✅ Verified end to end — reached `ready`** |
-| Windows Server 2019 | `autounattend.xml`, image index 2 | Untested |
+| Windows Server 2019 | `autounattend.xml`, image index 2 | **✅ Verified end to end — reached `ready`, 7/7 guest checks** |
 | Windows 7 | `autounattend.xml` | Untested, best-effort — Tools support on 17.x is legacy |
 
 ## Environment notes

@@ -381,9 +381,9 @@ answer whenever something is broken.
 
 ### Honest status
 
-**Kali 2024.4, Ubuntu 24.04, and Windows 10 have all been provisioned end to
-end** — blank disk to `lifecycle: ready`, each account proven by running commands
-in it:
+**Four guests have been provisioned end to end** — Kali 2024.4, Ubuntu 24.04,
+Windows 10 Pro, and Windows Server 2019 — each from a blank disk to
+`lifecycle: ready`, with the account proven by running commands in it:
 
 ```
 kali-lab     ready   guest_exec_capture → Linux kali 6.11.2-amd64 · uid=1000(labuser)
@@ -392,10 +392,12 @@ ubuntu-lab   ready   guest_exec_capture → Ubuntu 24.04.3 LTS · uid=1000(labus
                      get_guest_ip → 192.168.119.139 · snapshot: clean
 win10-lab    ready   guest_exec_capture → Microsoft Windows 10 Pro · win10-lab\labadmin
                      get_guest_ip → 192.168.119.140 · snapshot: clean · 7/7 checks
+winsrv2019   ready   guest_exec_capture → Windows Server 2019 Standard Evaluation
+                     get_guest_ip → 192.168.119.141 · snapshot: clean · 7/7 checks
 all                  file write/read round-trip exact
 ```
 
 That verifies the guest layer across all three answer-file delivery paths —
-preseed over HTTP, cloud-init seed ISO, and Windows `autounattend.xml`. Server
-2019 is the remaining untested guest. `ROADMAP.md` tracks status per tool rather than claiming
+preseed over HTTP, cloud-init seed ISO, and Windows `autounattend.xml` — on both
+Linux and Windows guests, client and server. `ROADMAP.md` tracks status per tool rather than claiming
 the whole surface works.

@@ -228,6 +228,14 @@ export function buildAutounattend(o: WindowsUnattendOptions): string {
         <ProtectYourPC>3</ProtectYourPC>
       </OOBE>
       <UserAccounts>
+        <!--
+          Windows Server's OOBE stops on "Customize settings" demanding a
+          password for the built-in Administrator, even when a LocalAccount and
+          AutoLogon are supplied — observed on Server 2019, which sat at that
+          screen until it was typed in by hand. Client Windows does not ask, but
+          setting it is harmless there, so it is always emitted.
+        -->
+        <AdministratorPassword><Value>${pass}</Value><PlainText>true</PlainText></AdministratorPassword>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
             <Name>${user}</Name>
