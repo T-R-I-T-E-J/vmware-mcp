@@ -3,7 +3,7 @@ import path from "node:path";
 import { loadConfig, saveCredential, type GuestCredential } from "./config.js";
 import { assertIsoAllowed } from "./paths.js";
 import * as vmrun from "./vmrun.js";
-import { cdromEntries, patchVmx, parseVmx } from "./vmx.js";
+import { cdromEntries, patchVmx, parseVmx, removeCdrom, writeVmx } from "./vmx.js";
 import { appendNote, updateRecord, type VmRecord } from "./registry.js";
 import { createVmCore, type CreateVmArgs } from "./tools/lifecycle.js";
 import { buildSeedIso, seedIsoPathFor } from "./seed/isoBuilder.js";
@@ -87,6 +87,53 @@ async function probeCredentials(
 ): Promise<boolean> {
   const path = isWindows ? "C:\\Windows\\System32\\kernel32.dll" : "/bin/sh";
   return vmrun.fileExistsInGuest(cred, vmxPath, path);
+}
+
+/**
+ * Land a freshly-installed VM in a clean, safe resting state: powered off, with
+ * the install media detached and the generated answer-file ISO deleted.
+ *
+ * The VM must be powered off first. Editing a running VM's .vmx does not stick —
+ * VMware rewrites the file when the VM powers down, which silently undid an
+ * earlier attempt to eject the media (`sata0:2.startConnected` was back to
+ * `TRUE` afterwards).
+ *
+ * Deleting the seed ISO matters beyond tidiness: an `autounattend.xml` embeds
+ * the account password in plain text, so leaving the image on disk leaves the
+ * guest's password readable on the host. The CD-ROM devices are removed
+ * entirely rather than just disconnected, so nothing points at the deleted file.
+ *
+ * Snapshotting last, with the VM off, also produces a smaller snapshot that
+ * restores to a clean powered-off machine rather than mid-session state.
+ */
+async function finishProvisioning(
+  vmxPath: string,
+  vmName: string,
+  snapshotName: string | undefined,
+  note: (s: string) => void,
+): Promise<string | undefined> {
+  if (await vmrun.isRunning(vmxPath)) {
+    await vmrun.stop(vmxPath, "soft").catch(() => undefined);
+    for (let i = 0; i < 20 && (await vmrun.isRunning(vmxPath)); i++) await sleep(5_000);
+    if (await vmrun.isRunning(vmxPath)) await vmrun.stop(vmxPath, "hard").catch(() => undefined);
+    note("Powered off so the .vmx edits below actually persist.");
+  }
+
+  const cfg = parseVmx(vmxPath);
+  for (const device of ["sata0:1", "sata0:2", "sata0:3"]) removeCdrom(cfg, device);
+  writeVmx(vmxPath, cfg);
+  note("Detached the install media; the VM boots from its own disk.");
+
+  const seed = seedIsoPathFor(vmName);
+  if (fs.existsSync(seed)) {
+    fs.rmSync(seed, { force: true });
+    note("Deleted the generated answer-file ISO (it contained the account password in clear text).");
+  }
+
+  if (!snapshotName) return undefined;
+  await vmrun.snapshot(vmxPath, snapshotName);
+  note(`Took snapshot "${snapshotName}" of the powered-off VM.`);
+  return snapshotName;
 }
 
 /**
@@ -341,27 +388,19 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
     note(`Verified login as "${req.username}" by running a command in the guest.`);
 
     // ---------------------------------------------------------------- finish
-    let snapshot: string | undefined;
-    if (req.snapshotWhenReady) {
-      snapshot = "clean";
-      await vmrun.snapshot(vmxPath, snapshot);
-      note(`Took snapshot "${snapshot}".`);
-    }
+    const snapshot = await finishProvisioning(
+      vmxPath,
+      req.name,
+      req.snapshotWhenReady ? "clean" : undefined,
+      note,
+    );
 
-    // Eject the install media so the VM never re-enters its own installer.
-    // The runtime disconnect takes effect immediately; the .vmx edit is what
-    // makes it stick, and VMware rewrites the .vmx at power-off, so do both.
-    for (const device of ["sata0:1", "sata0:2", "sata0:3"]) {
-      await vmrun.disconnectNamedDevice(vmxPath, device).catch(() => undefined);
-    }
-    patchVmx(vmxPath, {
-      "sata0:1.startConnected": "FALSE",
-      "sata0:2.startConnected": "FALSE",
-      "sata0:3.startConnected": "FALSE",
+    updateRecord(req.name, {
+      lifecycle: "ready",
+      credentialRef: req.credentialRef,
+      seedIso: undefined,
+      lastError: undefined,
     });
-    note("Ejected the install media; the VM now boots from its own disk.");
-
-    updateRecord(req.name, { lifecycle: "ready", credentialRef: req.credentialRef, seedIso, lastError: undefined });
 
     return {
       name: req.name,
@@ -440,22 +479,7 @@ export async function finalizeProvision(o: FinalizeOptions): Promise<ProvisionRe
   }
   note(`Verified login as "${o.cred.username}".`);
 
-  for (const device of ["sata0:1", "sata0:2", "sata0:3"]) {
-    await vmrun.disconnectNamedDevice(o.vmxPath, device).catch(() => undefined);
-  }
-  patchVmx(o.vmxPath, {
-    "sata0:1.startConnected": "FALSE",
-    "sata0:2.startConnected": "FALSE",
-    "sata0:3.startConnected": "FALSE",
-  });
-  note("Ejected the install media.");
-
-  let snapshot: string | undefined;
-  if (o.snapshotName) {
-    snapshot = o.snapshotName;
-    await vmrun.snapshot(o.vmxPath, snapshot);
-    note(`Took snapshot "${snapshot}".`);
-  }
+  const snapshot = await finishProvisioning(o.vmxPath, o.name, o.snapshotName, note);
 
   // Clear any error from an earlier failed attempt; the VM is good now.
   updateRecord(o.name, { lifecycle: "ready", lastError: undefined });
