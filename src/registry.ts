@@ -9,10 +9,59 @@ export type VmLifecycle =
   | "failed"
   | "imported";
 
+/**
+ * How far provisioning got. Free-text notes recorded what happened but could not
+ * be reasoned about, so a failed install could only be rebuilt from scratch.
+ * Recording the phase lets retry_provision pick the cheapest viable recovery.
+ */
+export type ProvisionPhase =
+  | "created"        // hardware exists, nothing booted
+  | "seeded"         // answer file generated and delivered
+  | "booted"         // powered on, boot command typed
+  | "installing"     // installer confirmed running (seed fetched, or media consumed)
+  | "tools-present"  // OS installed and VMware Tools reporting
+  | "login-verified" // the created account can run commands
+  | "finished";      // media detached, snapshot taken
+
+/**
+ * Enough of the original request to rebuild a VM identically. The password is
+ * deliberately absent — it is reachable through credentialRef, so the registry
+ * never stores one.
+ */
+export interface ProvisionSpec {
+  installIso: string;
+  guestOsId: string;
+  username: string;
+  memoryMb: number;
+  cpus: number;
+  diskGb: number;
+  firmware: "bios" | "efi";
+  network: string;
+  customVnet?: string;
+  windowsImageName?: string;
+  windowsImageIndex?: number;
+  productKey?: string;
+  bypassHardwareChecks?: boolean;
+  autologin?: boolean;
+  extraPackages?: string[];
+  timezone?: string;
+  locale?: string;
+  bootCommand?: string;
+  bootWaitSec?: number;
+  keyDelayMs?: number;
+  installTimeoutMin: number;
+  snapshotWhenReady: boolean;
+  tags?: string[];
+}
+
 export interface VmRecord {
   name: string;
   vmxPath: string;
   guestOsId: string;
+  /** How far provisioning reached; drives retry_provision. */
+  phase?: ProvisionPhase;
+  /** The request that built this VM, so it can be rebuilt identically. */
+  provisionSpec?: ProvisionSpec;
   /** Family drives which unattended-install strategy applies. */
   osFamily: "windows" | "debian" | "ubuntu" | "other";
   lifecycle: VmLifecycle;

@@ -1,17 +1,21 @@
+import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { loadConfig, resolveCredential } from "../config.js";
 import { assertIsoAllowed, resolveVmxByNameOrPath } from "../paths.js";
-import { getRecord, listRecords } from "../registry.js";
+import { appendNote, listRecords, removeRecord } from "../registry.js";
 import { provisionVm, finalizeProvision } from "../provision.js";
 import { defaultBootCommand, installerKindFor } from "../bootCommand.js";
+import { parseBootCommand } from "../keymap.js";
+import { playBootCommand } from "../vnc.js";
+import { parseVmx } from "../vmx.js";
 import { buildAutounattend } from "../seed/autounattend.js";
 import { buildPreseed, kaliDefaults } from "../seed/preseed.js";
 import { buildUserData } from "../seed/cloudinit.js";
 import { sha512Crypt } from "../seed/sha512crypt.js";
 import * as vmrun from "../vmrun.js";
-import { defineTool, json, text, vmArg } from "./common.js";
+import { defineTool, json, requireConfirm, text, vmArg } from "./common.js";
 
 /**
  * Background provisioning jobs, keyed by VM name. The registry is the durable
@@ -136,6 +140,8 @@ export function registerProvisionTools(server: McpServer): void {
         running,
         toolsState,
         lifecycle: rec?.lifecycle ?? "unknown",
+        phase: rec?.phase ?? null,
+        canRetry: rec?.provisionSpec ? true : false,
         provisionInFlight: rec ? inFlight.has(rec.name) : false,
         lastError: rec?.lastError ?? null,
         notes: rec?.notes ?? [],
@@ -175,6 +181,155 @@ export function registerProvisionTools(server: McpServer): void {
         snapshotName: a.snapshotName || undefined,
       });
       return json(result);
+    },
+  );
+
+  defineTool(
+    server,
+    "retry_provision",
+    {
+      title: "Retry a failed provision",
+      description:
+        "Recover a VM whose install failed, choosing the cheapest action that can actually work. If the OS installed and only the post-install steps failed, it finalizes rather than rebuilding (minutes, not an hour). If the installer stalled before it ever started, it replays the boot command. If the disk was left half-written there is no honest resume, so it says so and rebuilds only when you pass confirm: true — a rebuild wipes the VM. Reuses the original request, so nothing has to be re-specified.",
+      inputSchema: {
+        ...vmArg,
+        strategy: z
+          .enum(["auto", "finalize", "replay-boot", "rebuild"])
+          .default("auto")
+          .describe("auto picks based on how far provisioning got"),
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe("Required for a rebuild, which deletes the VM and installs again"),
+      },
+    },
+    async (a) => {
+      const vmx = resolveVmxByNameOrPath(a.vm);
+      const rec = listRecords().find((r) => r.vmxPath.toLowerCase() === vmx.toLowerCase());
+      if (!rec) throw new Error(`${vmx} is not in the registry, so there is no provision to retry.`);
+
+      const phase = rec.phase ?? "created";
+      const running = await vmrun.isRunning(vmx);
+      const toolsState = running ? await vmrun.checkToolsState(vmx) : "poweredOff";
+      const toolsPresent = toolsState === "running" || toolsState === "installed";
+
+      // Pick the cheapest action that stands a chance.
+      let strategy = a.strategy;
+      if (strategy === "auto") {
+        if (toolsPresent) strategy = "finalize";
+        else if (phase === "created" || phase === "seeded" || phase === "booted") strategy = "replay-boot";
+        else strategy = "rebuild";
+      }
+
+      const context = { vm: rec.name, phase, running, toolsState, chosen: strategy };
+
+      if (strategy === "finalize") {
+        if (!rec.credentialRef) {
+          throw new Error("No credentialRef on this VM, so the account cannot be verified. Store one with set_credential.");
+        }
+        const cred = resolveCredential({ credentialRef: rec.credentialRef });
+        const result = await finalizeProvision({
+          vmxPath: vmx,
+          name: rec.name,
+          cred,
+          isWindows: rec.osFamily === "windows",
+          waitMinutes: 20,
+          snapshotName: rec.provisionSpec?.snapshotWhenReady === false ? undefined : "clean",
+        });
+        return json({ ...context, outcome: "finalized", result });
+      }
+
+      if (strategy === "replay-boot") {
+        // The installer never started, so the disk should still be untouched and
+        // retyping the boot command is safe.
+        const spec = rec.provisionSpec;
+        if (!spec) throw new Error("No stored provision spec for this VM; rebuild it with provision_vm instead.");
+        if (!running) await vmrun.start(vmx, "nogui");
+
+        const kind = installerKindFor(rec.osFamily, path.basename(spec.installIso));
+        const seedUrl = undefined; // an HTTP seed server is not running outside provision_vm
+        if (kind === "debian" || kind === "kali") {
+          throw new Error(
+            "This guest takes its answer file over HTTP, which only runs during provision_vm — replaying the boot command alone would leave the installer waiting. Retry with strategy 'rebuild'.",
+          );
+        }
+        const boot = defaultBootCommand(kind, { seedUrl });
+        const command = spec.bootCommand ?? boot.command;
+        const steps = parseBootCommand(command);
+        await new Promise((r) => setTimeout(r, (spec.bootWaitSec ?? boot.bootWaitSec) * 1000));
+        const port = Number(parseVmx(vmx).get("remotedisplay.vnc.port"));
+        const played = await playBootCommand({ port }, steps, spec.keyDelayMs ?? boot.keyDelayMs);
+        appendNote(rec.name, `retry_provision replayed the boot command (${played.keysSent} keystrokes).`);
+        return json({
+          ...context,
+          outcome: "boot-command-replayed",
+          command,
+          keystrokesSent: played.keysSent,
+          next: "Poll get_provision_status; once VMware Tools appears, run retry_provision again to finalize.",
+        });
+      }
+
+      // rebuild
+      const spec = rec.provisionSpec;
+      if (!spec) {
+        throw new Error(
+          "No stored provision spec for this VM — it predates phase tracking. Delete it and call provision_vm directly.",
+        );
+      }
+      if (!rec.credentialRef) {
+        throw new Error("Rebuilding needs the account password, which is reached through credentialRef. None is stored.");
+      }
+      requireConfirm(
+        a.confirm,
+        `rebuilding ${rec.name}: the existing VM is deleted and reinstalled from ${path.basename(spec.installIso)} (phase reached: ${phase})`,
+      );
+
+      const cred = resolveCredential({ credentialRef: rec.credentialRef });
+      const cfg = loadConfig();
+      if (running) await vmrun.stop(vmx, "hard").catch(() => undefined);
+      await vmrun.deleteVM(vmx).catch(() => undefined);
+      const dir = path.dirname(vmx);
+      const rel = path.relative(cfg.vmRoot, dir);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        throw new Error(`Refusing to delete ${dir}: outside VM_ROOT.`);
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+      removeRecord(rec.name);
+
+      startBackgroundProvision({
+        name: rec.name,
+        installIso: spec.installIso,
+        guestOsId: spec.guestOsId,
+        username: spec.username,
+        password: cred.password,
+        credentialRef: rec.credentialRef,
+        memoryMb: spec.memoryMb,
+        cpus: spec.cpus,
+        diskGb: spec.diskGb,
+        firmware: spec.firmware,
+        network: spec.network as "nat" | "bridged" | "hostonly" | "custom" | "none",
+        customVnet: spec.customVnet,
+        tags: spec.tags,
+        windowsImageName: spec.windowsImageName,
+        windowsImageIndex: spec.windowsImageIndex,
+        productKey: spec.productKey,
+        bypassHardwareChecks: spec.bypassHardwareChecks,
+        autologin: spec.autologin,
+        extraPackages: spec.extraPackages,
+        timezone: spec.timezone,
+        locale: spec.locale,
+        bootCommand: spec.bootCommand,
+        bootWaitSec: spec.bootWaitSec,
+        keyDelayMs: spec.keyDelayMs,
+        installTimeoutMin: spec.installTimeoutMin,
+        snapshotWhenReady: spec.snapshotWhenReady,
+      });
+
+      return json({
+        ...context,
+        outcome: "rebuilding",
+        message: "Deleted and reinstalling in the background with the original settings. Poll get_provision_status.",
+      });
     },
   );
 

@@ -4,7 +4,7 @@ import { loadConfig, saveCredential, type GuestCredential } from "./config.js";
 import { assertIsoAllowed } from "./paths.js";
 import * as vmrun from "./vmrun.js";
 import { cdromEntries, patchVmx, parseVmx, removeCdrom, writeVmx } from "./vmx.js";
-import { appendNote, updateRecord, type VmRecord } from "./registry.js";
+import { appendNote, updateRecord, type ProvisionPhase, type ProvisionSpec, type VmRecord } from "./registry.js";
 import { createVmCore, type CreateVmArgs } from "./tools/lifecycle.js";
 import { buildSeedIso, seedIsoPathFor } from "./seed/isoBuilder.js";
 import { buildAutounattend } from "./seed/autounattend.js";
@@ -189,7 +189,25 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
       tags: req.tags,
     } satisfies CreateVmArgs);
     vmxPath = created.vmxPath;
-    updateRecord(req.name, { lifecycle: "provisioning", credentialRef: req.credentialRef });
+    const savedSpec: ProvisionSpec = {
+      installIso: req.installIso, guestOsId: req.guestOsId, username: req.username,
+      memoryMb: req.memoryMb, cpus: req.cpus, diskGb: req.diskGb, firmware: req.firmware,
+      network: req.network, customVnet: req.customVnet,
+      windowsImageName: req.windowsImageName, windowsImageIndex: req.windowsImageIndex,
+      productKey: req.productKey, bypassHardwareChecks: req.bypassHardwareChecks,
+      autologin: req.autologin, extraPackages: req.extraPackages,
+      timezone: req.timezone, locale: req.locale,
+      bootCommand: req.bootCommand, bootWaitSec: req.bootWaitSec, keyDelayMs: req.keyDelayMs,
+      installTimeoutMin: req.installTimeoutMin, snapshotWhenReady: req.snapshotWhenReady,
+      tags: req.tags,
+    };
+    // Persist the request so a later retry can rebuild this VM identically
+    // without the caller having to remember what they asked for (#9).
+    updateRecord(req.name, {
+      lifecycle: "provisioning", credentialRef: req.credentialRef,
+      phase: "created", provisionSpec: savedSpec,
+    });
+    const setPhase = (p: ProvisionPhase) => updateRecord(req.name, { phase: p });
     note(`Created VM at ${vmxPath} from ${isoName} (installer: ${kind}).`);
 
     // Store the credentials up front so every later guest_* call can use them.
@@ -278,6 +296,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
       seedUrl = seedServer.url;
       note(`Serving preseed at ${seedUrl}/preseed.cfg (bound to the host's virtual-network address only).`);
     }
+    setPhase("seeded");
 
     // ---------------------------------------------------------------- boot
     const spec = defaultBootCommand(kind, { seedUrl, hostname: req.name });
@@ -296,6 +315,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
     const vncPort = Number(parseVmx(vmxPath).get("remotedisplay.vnc.port"));
     const played = await playBootCommand({ port: vncPort }, steps, keyDelayMs);
     note(`Typed boot command (${played.keysSent} keystrokes) on VNC port ${vncPort}.`);
+    setPhase("booted");
 
     if (seedServer) {
       // Typing at a bootloader prompt is inherently lossy: the prompt polls the
@@ -321,6 +341,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
       }
       note("Installer fetched the preseed; unattended install is under way.");
     }
+    setPhase("installing");
 
     // ---------------------------------------------------------------- wait
     //
@@ -346,6 +367,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
       );
     }
     note(`VMware Tools is running after ${Math.round((Date.now() - started) / 60000)} min.`);
+    setPhase("tools-present");
 
     // ---------------------------------------------------------------- verify login
     // Tools reporting present does not mean the account is usable, so prove it
@@ -386,6 +408,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
       );
     }
     note(`Verified login as "${req.username}" by running a command in the guest.`);
+    setPhase("login-verified");
 
     // ---------------------------------------------------------------- finish
     const snapshot = await finishProvisioning(
@@ -400,6 +423,7 @@ export async function provisionVm(req: ProvisionRequest): Promise<ProvisionResul
       credentialRef: req.credentialRef,
       seedIso: undefined,
       lastError: undefined,
+      phase: "finished",
     });
 
     return {
@@ -482,7 +506,7 @@ export async function finalizeProvision(o: FinalizeOptions): Promise<ProvisionRe
   const snapshot = await finishProvisioning(o.vmxPath, o.name, o.snapshotName, note);
 
   // Clear any error from an earlier failed attempt; the VM is good now.
-  updateRecord(o.name, { lifecycle: "ready", lastError: undefined });
+  updateRecord(o.name, { lifecycle: "ready", lastError: undefined, phase: "finished" });
   const screenshot = await grabScreenshot(o.vmxPath).catch(() => undefined);
 
   return {
